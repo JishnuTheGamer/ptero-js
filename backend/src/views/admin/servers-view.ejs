@@ -1,0 +1,76 @@
+<%- include('partials/header', { title: 'Server: ' + server.name, activeNav: 'servers', contentHeader: '<h1>' + server.name + '<small>' + server.uuid + '</small></h1><ol class="breadcrumb"><li><a href="/admin">Admin</a></li><li><a href="/admin/servers">Servers</a></li><li class="active">' + server.name + '</li></ol>' }) %>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="box box-primary">
+            <div class="box-header with-border"><h3 class="box-title">Server Details & Limits</h3></div>
+            <form action="/admin/servers/view/<%= server.id %>/update" method="POST">
+                <div class="box-body">
+                    <div class="form-group"><label>Server Name</label><input type="text" name="name" class="form-control" value="<%= server.name %>" required></div>
+                    <div class="form-group"><label>Description</label><textarea name="description" class="form-control" rows="2"><%= server.description || '' %></textarea></div>
+                    <div class="row">
+                        <div class="form-group col-xs-4"><label>Memory (MiB)</label><input type="number" name="memory" class="form-control" value="<%= server.memory %>" min="0" required></div>
+                        <div class="form-group col-xs-4"><label>Disk (MiB)</label><input type="number" name="disk" class="form-control" value="<%= server.disk %>" min="0" required></div>
+                        <div class="form-group col-xs-4"><label>CPU (%)</label><input type="number" name="cpu" class="form-control" value="<%= server.cpu %>" min="0" required></div>
+                    </div>
+                    <div class="row">
+                        <div class="form-group col-xs-4"><label>Databases</label><input type="number" name="database_limit" class="form-control" value="<%= server.database_limit %>" min="0"></div>
+                        <div class="form-group col-xs-4"><label>Allocations</label><input type="number" name="allocation_limit" class="form-control" value="<%= server.allocation_limit %>" min="0"></div>
+                        <div class="form-group col-xs-4"><label>Backups</label><input type="number" name="backup_limit" class="form-control" value="<%= server.backup_limit %>" min="0"></div>
+                    </div>
+                    <p class="text-muted small" style="margin-top:-8px;">Set any resource or feature limit to <code>0</code> for Unlimited.</p>
+                    <div class="form-group">
+                        <label>Startup Command</label>
+                        <input type="text" name="startup" class="form-control" value="<%= server.startup %>">
+                    </div>
+                    <div class="form-group">
+                        <label>Java Runtime Image</label>
+                        <select name="image" class="form-control">
+                            <option value="java:auto" <%= server.image === 'java:auto' ? 'selected' : '' %>>Auto-Detect</option>
+                            <option value="java:25" <%= server.image === 'java:25' ? 'selected' : '' %>>Java 25</option>
+                            <option value="java:21" <%= server.image === 'java:21' ? 'selected' : '' %>>Java 21</option>
+                            <option value="java:17" <%= server.image === 'java:17' ? 'selected' : '' %>>Java 17</option>
+                            <option value="java:11" <%= server.image === 'java:11' ? 'selected' : '' %>>Java 11</option>
+                            <option value="java:8" <%= server.image === 'java:8' ? 'selected' : '' %>>Java 8</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="box-footer">
+                    <a href="/server/<%= server.uuidShort %>" class="btn btn-default btn-sm"><i class="fa fa-terminal"></i> Open Console</a>
+                    <button type="submit" class="btn btn-primary btn-sm pull-right">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="box box-info">
+            <div class="box-header with-border"><h3 class="box-title">Server Management Actions</h3></div>
+            <div class="box-body">
+                <p><strong>Software:</strong> <%= server.egg_name %> | <strong>Process State:</strong> <code><%= processState %></code></p>
+                <p><strong>Primary Allocation:</strong> <code><%= server.ip %>:<%= server.port %></code></p>
+                <hr>
+                <form action="/admin/servers/view/<%= server.id %>/reinstall" method="POST" style="display:inline-block;margin-right:8px;">
+                    <button type="submit" class="btn btn-warning btn-sm">Reinstall Server Software</button>
+                </form>
+                <form action="/admin/servers/view/<%= server.id %>/suspension" method="POST" style="display:inline-block;">
+                    <button type="submit" class="btn <%= server.status === 'suspended' ? 'btn-success' : 'btn-danger' %> btn-sm">
+                        <%= server.status === 'suspended' ? 'Unsuspend Server' : 'Suspend Server' %>
+                    </button>
+                </form>
+            </div>
+        </div>
+        <div class="box box-danger">
+            <div class="box-header with-border"><h3 class="box-title">Delete Server</h3></div>
+            <div class="box-body">
+                <p class="text-danger">This will stop the server process, remove its files, backups, and database records permanently.</p>
+            </div>
+            <div class="box-footer">
+                <form action="/admin/servers/view/<%= server.id %>/delete" method="POST">
+                    <button type="submit" class="btn btn-danger btn-sm pull-right">Delete Server</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<%- include('partials/footer') %>

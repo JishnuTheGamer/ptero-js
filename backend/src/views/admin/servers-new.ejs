@@ -1,0 +1,179 @@
+<%- include('partials/header', { title: 'New Server', activeNav: 'servers', contentHeader: '<h1>Create Server<small>Add a new Minecraft server to the panel.</small></h1><ol class="breadcrumb"><li><a href="/admin">Admin</a></li><li><a href="/admin/servers">Servers</a></li><li class="active">Create Server</li></ol>' }) %>
+
+<form action="/admin/servers/new" method="POST">
+    <div class="row">
+        <div class="col-xs-12">
+            <div class="box box-primary">
+                <div class="box-header with-border"><h3 class="box-title">Core Details</h3></div>
+                <div class="box-body row">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="pName">Server Name</label>
+                            <input type="text" class="form-control" id="pName" name="name" placeholder="Survival SMP" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="pUserId">Server Owner</label>
+                            <select id="pUserId" name="owner_id" class="form-control">
+                                <% for (const u of users) { %>
+                                <option value="<%= u.id %>"><%= u.username %> (<%= u.email %>)</option>
+                                <% } %>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label for="pDescription">Server Description</label>
+                            <textarea id="pDescription" name="description" rows="3" class="form-control"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <div class="checkbox checkbox-primary no-margin-bottom">
+                                <input id="pStartOnCreation" name="start_on_completion" type="checkbox" value="1" />
+                                <label for="pStartOnCreation" class="strong">Start Server when Installed</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-xs-12">
+            <div class="box">
+                <div class="box-header with-border"><h3 class="box-title">Allocation Management (Single-Node Local Engine)</h3></div>
+                <div class="box-body row">
+                    <div class="form-group col-sm-6">
+                        <label>Node</label>
+                        <input type="text" class="form-control" value="<%= node.name %> (<%= node.fqdn %>)" readonly>
+                        <input type="hidden" name="node_id" value="<%= node.id %>">
+                    </div>
+                    <div class="form-group col-sm-6">
+                        <label for="pAllocation">Default Allocation</label>
+                        <select id="pAllocation" name="allocation_id" class="form-control" required>
+                            <% for (const a of freeAllocations) { %>
+                            <option value="<%= a.id %>"><%= a.ip %>:<%= a.port %></option>
+                            <% } %>
+                        </select>
+                        <% if (freeAllocations.length === 0) { %>
+                        <p class="text-danger small">No unassigned allocations available. <a href="/admin/allocations">Add new port allocations</a>.</p>
+                        <% } %>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-xs-12">
+            <div class="box">
+                <div class="box-header with-border"><h3 class="box-title">Resource Management</h3></div>
+                <div class="box-body row">
+                    <div class="form-group col-xs-4">
+                        <label>Memory (MiB)</label>
+                        <input type="number" name="memory" class="form-control" value="2048" min="0" required>
+                    </div>
+                    <div class="form-group col-xs-4">
+                        <label>Disk Space (MiB)</label>
+                        <input type="number" name="disk" class="form-control" value="10240" min="0" required>
+                    </div>
+                    <div class="form-group col-xs-4">
+                        <label>CPU Limit (%)</label>
+                        <input type="number" name="cpu" class="form-control" value="0" min="0">
+                    </div>
+                    <div class="form-group col-xs-4">
+                        <label>Database Limit</label>
+                        <input type="number" name="database_limit" class="form-control" value="0" min="0">
+                    </div>
+                    <div class="form-group col-xs-4">
+                        <label>Allocation Limit</label>
+                        <input type="number" name="allocation_limit" class="form-control" value="1" min="0">
+                    </div>
+                    <div class="form-group col-xs-4">
+                        <label>Backup Limit</label>
+                        <input type="number" name="backup_limit" class="form-control" value="5" min="0">
+                    </div>
+                    <p class="text-muted small col-xs-12 no-margin-bottom">Set any resource or feature limit to <code>0</code> for Unlimited (uses full system capacity without showing host limits).</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-6">
+            <div class="box">
+                <div class="box-header with-border"><h3 class="box-title">Minecraft Software Configuration</h3></div>
+                <div class="box-body">
+                    <div class="form-group">
+                        <label for="pNestId">Nest</label>
+                        <select id="pNestId" name="nest_id" class="form-control">
+                            <% for (const n of nests) { %>
+                            <option value="<%= n.id %>"><%= n.name %></option>
+                            <% } %>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="pEggId">Server Software (Egg)</label>
+                        <select id="pEggId" name="egg_id" class="form-control">
+                            <% for (const e of eggs) { %>
+                            <option value="<%= e.id %>" data-startup="<%= e.startup %>"><%= e.name %></option>
+                            <% } %>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="pMinecraftVersion">Minecraft Version</label>
+                        <input type="text" id="pMinecraftVersion" name="minecraft_version" class="form-control" value="latest" placeholder="e.g. 1.21.4 or latest">
+                    </div>
+                    <div class="form-group">
+                        <label for="pJavaImage">Java Runtime Version</label>
+                        <select id="pJavaImage" name="image" class="form-control">
+                            <option value="java:auto">Auto-Detect for Minecraft Version</option>
+                            <option value="java:25">Java 25 (MC 26.x+)</option>
+                            <option value="java:21">Java 21 (MC 1.20.5 - 1.21.x)</option>
+                            <option value="java:17">Java 17 (MC 1.18 - 1.20.4)</option>
+                            <option value="java:11">Java 11 (MC 1.16.5)</option>
+                            <option value="java:8">Java 8 (MC 1.8 - 1.16.5)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="box">
+                <div class="box-header with-border"><h3 class="box-title">Startup Configuration</h3></div>
+                <div class="box-body">
+                    <div class="form-group">
+                        <label for="pStartup">Startup Command</label>
+                        <input type="text" id="pStartup" name="startup" class="form-control" value="<%= eggs[0] ? eggs[0].startup : '' %>" required>
+                    </div>
+                    <div class="form-group">
+                        <div class="checkbox checkbox-primary">
+                            <input id="pSkipScripts" name="skip_scripts" type="checkbox" value="1" />
+                            <label for="pSkipScripts">Skip Software Auto-Download</label>
+                        </div>
+                        <p class="text-muted small">If unchecked, the panel automatically downloads the selected Minecraft server JAR and generates EULA + server.properties.</p>
+                    </div>
+                </div>
+                <div class="box-footer">
+                    <button type="submit" class="btn btn-success pull-right">Create Server</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var eggSelect = document.getElementById('pEggId');
+    var startupInput = document.getElementById('pStartup');
+    if (eggSelect && startupInput) {
+        eggSelect.addEventListener('change', function() {
+            var opt = eggSelect.options[eggSelect.selectedIndex];
+            if (opt && opt.dataset.startup) {
+                startupInput.value = opt.dataset.startup;
+            }
+        });
+    }
+});
+</script>
+
+<%- include('partials/footer') %>

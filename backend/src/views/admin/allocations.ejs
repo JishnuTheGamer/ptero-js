@@ -1,0 +1,75 @@
+<%- include('partials/header', { title: 'Local Allocations', activeNav: 'allocations', contentHeader: '<h1>Local Node Allocations<small>Manage IP and port allocations on this single-node instance.</small></h1><ol class="breadcrumb"><li><a href="/admin">Admin</a></li><li class="active">Allocations</li></ol>' }) %>
+
+<div class="row">
+    <div class="col-sm-8">
+        <div class="box box-primary">
+            <div class="box-header with-border"><h3 class="box-title">Existing Allocations (<%= node.name %>)</h3></div>
+            <div class="box-body table-responsive no-padding">
+                <table class="table table-hover">
+                    <tbody>
+                        <tr>
+                            <th>IP Address</th>
+                            <th>IP Alias</th>
+                            <th>Port</th>
+                            <th>Assigned To</th>
+                            <th></th>
+                        </tr>
+                        <% for (const a of allocations) { %>
+                        <tr>
+                            <td><code><%= a.ip %></code></td>
+                            <td><%= a.ip_alias || '-' %></td>
+                            <td><code><%= a.port %></code></td>
+                            <td>
+                                <% if (a.server_name) { %>
+                                    <a href="/admin/servers/view/<%= a.server_id %>"><%= a.server_name %></a>
+                                <% } else { %>
+                                    <span class="label label-default">Unassigned</span>
+                                <% } %>
+                            </td>
+                            <td>
+                                <% if (!a.server_id) { %>
+                                <form action="/admin/allocations/delete/<%= a.id %>" method="POST" style="display:inline;">
+                                    <button type="submit" class="btn btn-xs btn-danger"><i class="fa fa-trash-o"></i></button>
+                                </form>
+                                <% } %>
+                            </td>
+                        </tr>
+                        <% } %>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-4">
+        <div class="box box-success">
+            <div class="box-header with-border"><h3 class="box-title">Assign New Allocations</h3></div>
+            <form action="/admin/allocations" method="POST">
+                <div class="box-body">
+                    <div class="form-group">
+                        <label>IP Address</label>
+                        <input type="text" name="ip" class="form-control" value="0.0.0.0" required>
+                    </div>
+                    <div class="form-group">
+                        <label>IP Alias (Optional)</label>
+                        <input type="text" name="ip_alias" class="form-control" placeholder="play.example.com">
+                    </div>
+                    <div class="form-group">
+                        <label>Ports (Single or Range, e.g. 25576-25580)</label>
+                        <input type="text" name="ports" class="form-control" placeholder="25576" required>
+                    </div>
+                </div>
+                <div class="box-footer">
+                    <button type="submit" class="btn btn-success btn-sm pull-right">Submit</button>
+                </div>
+            </form>
+        </div>
+        <div class="box box-info">
+            <div class="box-header with-border"><h3 class="box-title">Single-Node Engine</h3></div>
+            <div class="box-body">
+                <p class="text-muted small">Multi-node management is disabled in this release. All servers run locally on <strong><%= node.name %></strong> (<code><%= node.fqdn %></code>).</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<%- include('partials/footer') %>

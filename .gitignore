@@ -1,0 +1,20 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Studio & test artifacts
+.aistudio/
+.playwright-cli/
+
+# Runtime binaries & user server data
+runtime/
+storage/servers/*
+storage/backups/*
+storage/logs/*
+storage/*.sqlite*
+!storage/.gitkeep

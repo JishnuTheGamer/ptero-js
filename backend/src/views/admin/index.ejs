@@ -1,0 +1,90 @@
+<%- include('partials/header', { title: 'Administration', activeNav: 'overview', contentHeader: '<h1>Administrative Overview<small>A quick glance at your system.</small></h1><ol class="breadcrumb"><li><a href="/admin">Admin</a></li><li class="active">Index</li></ol>' }) %>
+
+<div class="row">
+    <div class="col-xs-12">
+        <div class="box box-success">
+            <div class="box-header with-border">
+                <h3 class="box-title">System Information</h3>
+            </div>
+            <div class="box-body">
+                You are running Pterodactyl Panel version <code><%= appVersion %></code> (Node.js <%= nodeVersion %>, Database: <code><%= dbDriver %></code>, Single-Node Mode).
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-3 col-sm-6 col-xs-12">
+        <div class="info-box bg-aqua">
+            <span class="info-box-icon"><i class="fa fa-server"></i></span>
+            <div class="info-box-content">
+                <span class="info-box-text">Servers</span>
+                <span class="info-box-number"><%= stats.servers %></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6 col-xs-12">
+        <div class="info-box bg-green">
+            <span class="info-box-icon"><i class="fa fa-users"></i></span>
+            <div class="info-box-content">
+                <span class="info-box-text">Users</span>
+                <span class="info-box-number"><%= stats.users %></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6 col-xs-12">
+        <div class="info-box bg-yellow">
+            <span class="info-box-icon"><i class="fa fa-plug"></i></span>
+            <div class="info-box-content">
+                <span class="info-box-text">Allocations</span>
+                <span class="info-box-number"><%= stats.allocations %></span>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 col-sm-6 col-xs-12">
+        <div class="info-box bg-red">
+            <span class="info-box-icon"><i class="fa fa-coffee"></i></span>
+            <div class="info-box-content">
+                <span class="info-box-text">Java Runtimes</span>
+                <span class="info-box-number"><%= javaRuntimes.length %></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-xs-12">
+        <div class="box box-primary">
+            <div class="box-header with-border">
+                <h3 class="box-title">Detected Java Runtimes (Minecraft Engine)</h3>
+            </div>
+            <div class="box-body table-responsive no-padding">
+                <table class="table table-hover">
+                    <tbody>
+                        <tr>
+                            <th>Major Version</th>
+                            <th>Full Version</th>
+                            <th>Vendor</th>
+                            <th>Executable Path</th>
+                        </tr>
+                        <% if (javaRuntimes.length === 0) { %>
+                        <tr>
+                            <td colspan="4" class="text-muted text-center">No Java runtimes detected on this host. Run <code>bash install.sh repair</code> or install OpenJDK 17/21.</td>
+                        </tr>
+                        <% } %>
+                        <% for (const rt of javaRuntimes) { %>
+                        <tr>
+                            <td><span class="label label-primary">Java <%= rt.majorVersion %></span></td>
+                            <td><code><%= rt.rawVersion %></code></td>
+                            <td><%= rt.vendor %></td>
+                            <td><code><%= rt.path %></code></td>
+                        </tr>
+                        <% } %>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<%- include('partials/footer') %>

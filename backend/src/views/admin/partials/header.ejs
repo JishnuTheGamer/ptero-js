@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <title><%= siteName %> - <%= title %></title>
+        <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" name="viewport">
+        <meta name="_token" content="<%= csrfToken %>">
+
+        <link rel="apple-touch-icon" sizes="180x180" href="/favicons/apple-touch-icon.png">
+        <link rel="icon" type="image/png" href="/favicons/favicon-32x32.png" sizes="32x32">
+        <link rel="icon" type="image/png" href="/favicons/favicon-16x16.png" sizes="16x16">
+        <link rel="manifest" href="/favicons/manifest.json">
+        <link rel="mask-icon" href="/favicons/safari-pinned-tab.svg" color="#bc6e3c">
+        <link rel="shortcut icon" href="/favicons/favicon.ico">
+        <meta name="msapplication-config" content="/favicons/browserconfig.xml">
+        <meta name="theme-color" content="#0e4688">
+
+        <link rel="stylesheet" href="/themes/pterodactyl/vendor/select2/select2.min.css">
+        <link rel="stylesheet" href="/themes/pterodactyl/vendor/bootstrap/bootstrap.min.css">
+        <link rel="stylesheet" href="/themes/pterodactyl/vendor/adminlte/admin.min.css">
+        <link rel="stylesheet" href="/themes/pterodactyl/vendor/adminlte/colors/skin-blue.min.css">
+        <link rel="stylesheet" href="/themes/pterodactyl/vendor/sweetalert/sweetalert.min.css">
+        <link rel="stylesheet" href="/themes/pterodactyl/vendor/animate/animate.min.css">
+        <link rel="stylesheet" href="/themes/pterodactyl/css/pterodactyl.css">
+        <link rel="stylesheet" href="/themes/pterodactyl/css/checkbox.css">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/ionicons/2.0.1/css/ionicons.min.css">
+    </head>
+    <body class="hold-transition skin-blue fixed sidebar-mini">
+        <div class="wrapper">
+            <header class="main-header">
+                <a href="/" class="logo">
+                    <span><%= siteName %></span>
+                </a>
+                <nav class="navbar navbar-static-top">
+                    <a href="#" class="sidebar-toggle" data-toggle="push-menu" role="button">
+                        <span class="sr-only">Toggle navigation</span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                        <span class="icon-bar"></span>
+                    </a>
+                    <div class="navbar-custom-menu">
+                        <ul class="nav navbar-nav">
+                            <li class="user-menu">
+                                <a href="/account">
+                                    <img src="<%= gravatarUrl %>" class="user-image" alt="User Image">
+                                    <span class="hidden-xs"><%= currentUser.name_first %> <%= currentUser.name_last %></span>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="/" data-toggle="tooltip" data-placement="bottom" title="Exit Admin Control"><i class="fa fa-server"></i></a>
+                            </li>
+                            <li>
+                                <a href="/auth/logout" id="logoutButton" data-toggle="tooltip" data-placement="bottom" title="Logout"><i class="fa fa-sign-out"></i></a>
+                            </li>
+                        </ul>
+                    </div>
+                </nav>
+            </header>
+            <aside class="main-sidebar">
+                <section class="sidebar">
+                    <ul class="sidebar-menu">
+                        <li class="header">BASIC ADMINISTRATION</li>
+                        <li class="<%= activeNav === 'overview' ? 'active' : '' %>">
+                            <a href="/admin"><i class="fa fa-home"></i> <span>Overview</span></a>
+                        </li>
+                        <li class="<%= activeNav === 'settings' ? 'active' : '' %>">
+                            <a href="/admin/settings"><i class="fa fa-wrench"></i> <span>Settings</span></a>
+                        </li>
+                        <li class="<%= activeNav === 'api' ? 'active' : '' %>">
+                            <a href="/admin/api"><i class="fa fa-gamepad"></i> <span>Application API</span></a>
+                        </li>
+                        <li class="header">MANAGEMENT</li>
+                        <li class="<%= activeNav === 'databases' ? 'active' : '' %>">
+                            <a href="/admin/databases"><i class="fa fa-database"></i> <span>Databases</span></a>
+                        </li>
+                        <li class="<%= activeNav === 'locations' ? 'active' : '' %>">
+                            <a href="/admin/locations"><i class="fa fa-globe"></i> <span>Locations</span></a>
+                        </li>
+                        <li class="<%= activeNav === 'allocations' ? 'active' : '' %>">
+                            <a href="/admin/allocations"><i class="fa fa-plug"></i> <span>Allocations</span></a>
+                        </li>
+                        <li class="<%= activeNav === 'servers' ? 'active' : '' %>">
+                            <a href="/admin/servers"><i class="fa fa-server"></i> <span>Servers</span></a>
+                        </li>
+                        <li class="<%= activeNav === 'users' ? 'active' : '' %>">
+                            <a href="/admin/users"><i class="fa fa-users"></i> <span>Users</span></a>
+                        </li>
+                        <li class="header">SERVICE MANAGEMENT</li>
+                        <li class="<%= activeNav === 'nests' ? 'active' : '' %>">
+                            <a href="/admin/nests"><i class="fa fa-th-large"></i> <span>Nests</span></a>
+                        </li>
+                    </ul>
+                </section>
+            </aside>
+            <div class="content-wrapper">
+                <section class="content-header">
+                    <%- contentHeader %>
+                </section>
+                <section class="content">
+                    <% if (flashError) { %>
+                    <div class="row"><div class="col-xs-12"><div class="alert alert-danger alert-dismissable" role="alert"><%= flashError %></div></div></div>
+                    <% } %>
+                    <% if (flashSuccess) { %>
+                    <div class="row"><div class="col-xs-12"><div class="alert alert-success alert-dismissable" role="alert"><%= flashSuccess %></div></div></div>
+                    <% } %>

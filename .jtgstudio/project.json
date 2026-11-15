@@ -1,0 +1,26 @@
+{
+  "studio": "JTG STUDIO",
+  "year": 2026,
+  "project": "Pterodactyl Panel v1.15.2 — Node.js + Java Edition",
+  "creator": {
+    "name": "Jishnu",
+    "youtube": "https://www.youtube.com/@JishnuTech69",
+    "discord": "https://discord.gg/VMFTDc3jDQ"
+  },
+  "upstream": {
+    "name": "Pterodactyl Panel",
+    "version": "1.15.2",
+    "website": "https://pterodactyl.io",
+    "repository": "https://github.com/pterodactyl/panel"
+  },
+  "edition": {
+    "runtime": "Node.js + TypeScript + Java",
+    "mode": "single-node",
+    "targets": [
+      "non-systemd Linux",
+      "Docker / container VPS",
+      "lightweight specs"
+    ]
+  },
+  "license": "MIT"
+}

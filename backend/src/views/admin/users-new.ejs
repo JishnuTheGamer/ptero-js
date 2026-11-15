@@ -1,0 +1,54 @@
+<%- include('partials/header', { title: 'Create User', activeNav: 'users', contentHeader: '<h1>Create User<small>Add a new user to the system.</small></h1><ol class="breadcrumb"><li><a href="/admin">Admin</a></li><li><a href="/admin/users">Users</a></li><li class="active">Create</li></ol>' }) %>
+
+<div class="row">
+    <form method="POST" action="/admin/users/new">
+        <div class="col-md-6">
+            <div class="box box-primary">
+                <div class="box-header with-border"><h3 class="box-title">Identity</h3></div>
+                <div class="box-body">
+                    <div class="form-group">
+                        <label for="email" class="control-label">Email</label>
+                        <input type="email" autocomplete="off" name="email" class="form-control" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="username" class="control-label">Username</label>
+                        <input type="text" autocomplete="off" name="username" class="form-control" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="name_first" class="control-label">Client First Name</label>
+                        <input type="text" autocomplete="off" name="name_first" class="form-control" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="name_last" class="control-label">Client Last Name</label>
+                        <input type="text" autocomplete="off" name="name_last" class="form-control" required />
+                    </div>
+                </div>
+                <div class="box-footer">
+                    <button type="submit" class="btn btn-success btn-sm pull-right">Create User</button>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="box">
+                <div class="box-header with-border"><h3 class="box-title">Permissions & Password</h3></div>
+                <div class="box-body">
+                    <div class="form-group">
+                        <label class="control-label">Administrator</label>
+                        <select name="root_admin" class="form-control">
+                            <option value="0">No</option>
+                            <option value="1">Yes</option>
+                        </select>
+                        <p class="text-muted"><small>Setting this to 'Yes' gives a user full administrative access.</small></p>
+                    </div>
+                    <div class="form-group">
+                        <label class="control-label">Password</label>
+                        <input type="password" name="password" class="form-control" required minlength="8" />
+                        <p class="text-muted"><small>Minimum 8 characters.</small></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+<%- include('partials/footer') %>

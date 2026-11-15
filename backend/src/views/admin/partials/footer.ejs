@@ -1,0 +1,57 @@
+                </section>
+            </div>
+            <footer class="main-footer">
+                <div class="pull-right small text-gray" style="margin-right:10px;margin-top:-7px;">
+                    <strong><i class="fa fa-fw fa-code-fork"></i></strong> <%= appVersion %><br />
+                    <strong><i class="fa fa-fw fa-server"></i></strong> Single-Node Mode
+                </div>
+                Copyright &copy; 2015 - <%= new Date().getFullYear() %> <a href="https://pterodactyl.io/">Pterodactyl Software</a> &bull; JTG STUDIO 2026.
+            </footer>
+        </div>
+        <script src="/js/keyboard.polyfill.js" type="application/javascript"></script>
+        <script>keyboardeventKeyPolyfill.polyfill();</script>
+        <script src="/themes/pterodactyl/vendor/jquery/jquery.min.js"></script>
+        <script src="/themes/pterodactyl/vendor/sweetalert/sweetalert.min.js"></script>
+        <script src="/themes/pterodactyl/vendor/bootstrap/bootstrap.min.js"></script>
+        <script src="/themes/pterodactyl/vendor/slimscroll/jquery.slimscroll.min.js"></script>
+        <script src="/themes/pterodactyl/vendor/adminlte/app.min.js"></script>
+        <script src="/themes/pterodactyl/vendor/bootstrap-notify/bootstrap-notify.min.js"></script>
+        <script src="/themes/pterodactyl/vendor/select2/select2.full.min.js"></script>
+        <script src="/themes/pterodactyl/vendor/lodash/lodash.js"></script>
+        <script src="/themes/pterodactyl/js/admin/functions.js"></script>
+        <script src="/js/autocomplete.js" type="application/javascript"></script>
+        <script>
+            $('#logoutButton').on('click', function (event) {
+                event.preventDefault();
+                swal({
+                    title: 'Do you want to log out?',
+                    type: 'warning',
+                    showCancelButton: true,
+                    confirmButtonColor: '#d9534f',
+                    cancelButtonColor: '#d33',
+                    confirmButtonText: 'Log out'
+                }, function () {
+                    $.ajax({
+                        type: 'POST',
+                        url: '/auth/logout',
+                        headers: { 'X-CSRF-TOKEN': $('meta[name="_token"]').attr('content') },
+                        complete: function () {
+                            window.location.href = '/auth/login';
+                        }
+                    });
+                });
+            });
+            $(function () {
+                $('[data-toggle="tooltip"]').tooltip();
+                var csrf = $('meta[name="_token"]').attr('content');
+                if (csrf) {
+                    $('form[method="POST"], form[method="post"]').each(function () {
+                        if ($(this).find('input[name="_token"]').length === 0) {
+                            $('<input>').attr({ type: 'hidden', name: '_token', value: csrf }).appendTo(this);
+                        }
+                    });
+                }
+            });
+        </script>
+    </body>
+</html>

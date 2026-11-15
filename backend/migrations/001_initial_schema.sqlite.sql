@@ -1,0 +1,342 @@
+-- Pterodactyl Node.js Panel - SQLite Development Schema (Mirror of MySQL Schema)
+
+CREATE TABLE IF NOT EXISTS migrations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  migration TEXT NOT NULL UNIQUE,
+  batch INTEGER NOT NULL DEFAULT 1,
+  executed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  external_id TEXT UNIQUE,
+  uuid TEXT NOT NULL UNIQUE,
+  username TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL UNIQUE,
+  name_first TEXT NOT NULL,
+  name_last TEXT NOT NULL,
+  password TEXT NOT NULL,
+  remember_token TEXT,
+  language TEXT NOT NULL DEFAULT 'en',
+  root_admin INTEGER NOT NULL DEFAULT 0,
+  use_totp INTEGER NOT NULL DEFAULT 0,
+  totp_secret TEXT,
+  totp_authenticated_at TEXT,
+  gravatar INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_recovery_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_ssh_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  public_key TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  key_type INTEGER NOT NULL DEFAULT 1,
+  identifier TEXT NOT NULL UNIQUE,
+  token TEXT NOT NULL,
+  allowed_ips TEXT,
+  memo TEXT,
+  last_used_at TEXT,
+  expires_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  r_servers INTEGER NOT NULL DEFAULT 0,
+  r_nodes INTEGER NOT NULL DEFAULT 0,
+  r_allocations INTEGER NOT NULL DEFAULT 0,
+  r_users INTEGER NOT NULL DEFAULT 0,
+  r_locations INTEGER NOT NULL DEFAULT 0,
+  r_nests INTEGER NOT NULL DEFAULT 0,
+  r_eggs INTEGER NOT NULL DEFAULT 0,
+  r_database_hosts INTEGER NOT NULL DEFAULT 0,
+  r_server_databases INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  ip_address TEXT,
+  user_agent TEXT,
+  payload TEXT,
+  last_activity INTEGER NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS password_resets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL,
+  token TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_resets_email ON password_resets(email);
+
+CREATE TABLE IF NOT EXISTS locations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  short TEXT NOT NULL UNIQUE,
+  long TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS nodes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT NOT NULL UNIQUE,
+  public INTEGER NOT NULL DEFAULT 1,
+  name TEXT NOT NULL,
+  description TEXT,
+  location_id INTEGER NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  fqdn TEXT NOT NULL,
+  scheme TEXT NOT NULL DEFAULT 'http',
+  behind_proxy INTEGER NOT NULL DEFAULT 0,
+  maintenance_mode INTEGER NOT NULL DEFAULT 0,
+  memory INTEGER NOT NULL DEFAULT 8192,
+  memory_overallocate INTEGER NOT NULL DEFAULT 0,
+  disk INTEGER NOT NULL DEFAULT 51200,
+  disk_overallocate INTEGER NOT NULL DEFAULT 0,
+  upload_size INTEGER NOT NULL DEFAULT 100,
+  daemon_token_id TEXT NOT NULL,
+  daemon_token TEXT NOT NULL,
+  daemonListen INTEGER NOT NULL DEFAULT 8080,
+  daemonSFTP INTEGER NOT NULL DEFAULT 2022,
+  daemonBase TEXT NOT NULL DEFAULT './storage/servers',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS nests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT NOT NULL UNIQUE,
+  author TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS eggs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT NOT NULL UNIQUE,
+  nest_id INTEGER NOT NULL REFERENCES nests(id) ON DELETE CASCADE,
+  author TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  features TEXT,
+  docker_images TEXT NOT NULL,
+  file_denylist TEXT,
+  startup TEXT NOT NULL,
+  config_files TEXT,
+  config_startup TEXT,
+  config_logs TEXT,
+  config_stop TEXT DEFAULT 'stop',
+  script_install TEXT,
+  software_type TEXT NOT NULL DEFAULT 'paper',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS egg_variables (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  egg_id INTEGER NOT NULL REFERENCES eggs(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  env_variable TEXT NOT NULL,
+  default_value TEXT NOT NULL,
+  user_viewable INTEGER NOT NULL DEFAULT 1,
+  user_editable INTEGER NOT NULL DEFAULT 1,
+  rules TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS servers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  external_id TEXT UNIQUE,
+  uuid TEXT NOT NULL UNIQUE,
+  uuidShort TEXT NOT NULL UNIQUE,
+  node_id INTEGER NOT NULL DEFAULT 1 REFERENCES nodes(id) ON DELETE RESTRICT,
+  name TEXT NOT NULL,
+  description TEXT,
+  status TEXT,
+  skip_scripts INTEGER NOT NULL DEFAULT 0,
+  owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  memory INTEGER NOT NULL DEFAULT 1024,
+  swap INTEGER NOT NULL DEFAULT 0,
+  disk INTEGER NOT NULL DEFAULT 10240,
+  io INTEGER NOT NULL DEFAULT 500,
+  cpu INTEGER NOT NULL DEFAULT 0,
+  threads TEXT,
+  oom_disabled INTEGER NOT NULL DEFAULT 0,
+  allocation_id INTEGER,
+  nest_id INTEGER NOT NULL REFERENCES nests(id) ON DELETE RESTRICT,
+  egg_id INTEGER NOT NULL REFERENCES eggs(id) ON DELETE RESTRICT,
+  startup TEXT NOT NULL,
+  image TEXT NOT NULL,
+  java_path TEXT,
+  restart_policy TEXT NOT NULL DEFAULT 'on-failure',
+  allocation_limit INTEGER DEFAULT 0,
+  database_limit INTEGER DEFAULT 0,
+  backup_limit INTEGER NOT NULL DEFAULT 0,
+  installed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_servers_owner ON servers(owner_id);
+CREATE INDEX IF NOT EXISTS idx_servers_node ON servers(node_id);
+
+CREATE TABLE IF NOT EXISTS allocations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  node_id INTEGER NOT NULL DEFAULT 1 REFERENCES nodes(id) ON DELETE CASCADE,
+  ip TEXT NOT NULL,
+  ip_alias TEXT,
+  port INTEGER NOT NULL,
+  server_id INTEGER REFERENCES servers(id) ON DELETE SET NULL,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(node_id, ip, port)
+);
+
+CREATE INDEX IF NOT EXISTS idx_allocations_server ON allocations(server_id);
+
+CREATE TABLE IF NOT EXISTS server_variables (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  variable_id INTEGER NOT NULL REFERENCES egg_variables(id) ON DELETE CASCADE,
+  variable_value TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(server_id, variable_id)
+);
+
+CREATE TABLE IF NOT EXISTS subusers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  permissions TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, server_id)
+);
+
+CREATE TABLE IF NOT EXISTS backups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  uuid TEXT NOT NULL UNIQUE,
+  is_successful INTEGER NOT NULL DEFAULT 0,
+  is_locked INTEGER NOT NULL DEFAULT 0,
+  name TEXT NOT NULL,
+  ignored_files TEXT NOT NULL,
+  disk TEXT NOT NULL DEFAULT 'wings',
+  checksum TEXT,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_backups_server ON backups(server_id);
+
+CREATE TABLE IF NOT EXISTS schedules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  cron_day_of_week TEXT NOT NULL,
+  cron_month TEXT NOT NULL,
+  cron_day_of_month TEXT NOT NULL,
+  cron_hour TEXT NOT NULL,
+  cron_minute TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  is_processing INTEGER NOT NULL DEFAULT 0,
+  only_when_online INTEGER NOT NULL DEFAULT 0,
+  last_run_at TEXT,
+  next_run_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_schedules_server ON schedules(server_id);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  schedule_id INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+  sequence_id INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  time_offset INTEGER NOT NULL DEFAULT 0,
+  is_queued INTEGER NOT NULL DEFAULT 0,
+  continue_on_failure INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_schedule ON tasks(schedule_id);
+
+CREATE TABLE IF NOT EXISTS database_hosts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  host TEXT NOT NULL,
+  port INTEGER NOT NULL DEFAULT 3306,
+  username TEXT NOT NULL,
+  password TEXT NOT NULL,
+  max_databases INTEGER,
+  node_id INTEGER,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS databases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  database_host_id INTEGER NOT NULL REFERENCES database_hosts(id) ON DELETE RESTRICT,
+  database TEXT NOT NULL,
+  username TEXT NOT NULL,
+  remote TEXT NOT NULL DEFAULT '%',
+  password TEXT NOT NULL,
+  max_connections INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS activity_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch TEXT,
+  event TEXT NOT NULL,
+  ip TEXT,
+  description TEXT,
+  actor_type TEXT,
+  actor_id INTEGER,
+  subject_type TEXT,
+  subject_id INTEGER,
+  api_key_id INTEGER,
+  properties TEXT,
+  timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_event ON activity_logs(event);
+CREATE INDEX IF NOT EXISTS idx_activity_subject ON activity_logs(subject_type, subject_id);
+CREATE INDEX IF NOT EXISTS idx_activity_actor ON activity_logs(actor_type, actor_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key TEXT NOT NULL UNIQUE,
+  value TEXT
+);

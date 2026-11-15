@@ -1,0 +1,29 @@
+[Unit]
+Description=Pterodactyl Node.js Panel & Local Minecraft Engine
+Documentation=https://pterodactyl.io/
+After=network.target mariadb.service mysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pterodactyl
+Group=pterodactyl
+WorkingDirectory=/opt/pterodactyl-panel
+EnvironmentFile=/opt/pterodactyl-panel/.env
+ExecStart=/opt/pterodactyl-panel/runtime/node/bin/node /opt/pterodactyl-panel/node_modules/.bin/tsx /opt/pterodactyl-panel/server.ts
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/pterodactyl-panel/storage /opt/pterodactyl-panel/runtime
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pterodactyl-panel
+
+[Install]
+WantedBy=multi-user.target

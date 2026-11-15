@@ -1,0 +1,356 @@
+-- Pterodactyl Node.js Panel - Initial MySQL / MariaDB Schema (v1.15.2 Compatible)
+
+CREATE TABLE IF NOT EXISTS `migrations` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `migration` VARCHAR(255) NOT NULL UNIQUE,
+  `batch` INT UNSIGNED NOT NULL DEFAULT 1,
+  `executed_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `users` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `external_id` VARCHAR(191) NULL UNIQUE,
+  `uuid` CHAR(36) NOT NULL UNIQUE,
+  `username` VARCHAR(191) NOT NULL UNIQUE,
+  `email` VARCHAR(191) NOT NULL UNIQUE,
+  `name_first` VARCHAR(191) NOT NULL,
+  `name_last` VARCHAR(191) NOT NULL,
+  `password` VARCHAR(255) NOT NULL,
+  `remember_token` VARCHAR(100) NULL,
+  `language` VARCHAR(10) NOT NULL DEFAULT 'en',
+  `root_admin` TINYINT(1) NOT NULL DEFAULT 0,
+  `use_totp` TINYINT(1) NOT NULL DEFAULT 0,
+  `totp_secret` TEXT NULL,
+  `totp_authenticated_at` DATETIME NULL,
+  `gravatar` TINYINT(1) NOT NULL DEFAULT 1,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `user_recovery_tokens` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT UNSIGNED NOT NULL,
+  `token` VARCHAR(191) NOT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT `fk_recovery_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `user_ssh_keys` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT UNSIGNED NOT NULL,
+  `name` VARCHAR(191) NOT NULL,
+  `fingerprint` VARCHAR(191) NOT NULL,
+  `public_key` TEXT NOT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `fk_ssh_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `api_keys` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT UNSIGNED NOT NULL,
+  `key_type` TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  `identifier` CHAR(16) NOT NULL UNIQUE,
+  `token` TEXT NOT NULL,
+  `allowed_ips` TEXT NULL,
+  `memo` TEXT NULL,
+  `last_used_at` DATETIME NULL,
+  `expires_at` DATETIME NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `r_servers` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `r_nodes` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `r_allocations` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `r_users` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `r_locations` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `r_nests` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `r_eggs` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `r_database_hosts` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  `r_server_databases` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  CONSTRAINT `fk_apikey_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `sessions` (
+  `id` VARCHAR(128) NOT NULL PRIMARY KEY,
+  `user_id` INT UNSIGNED NOT NULL,
+  `ip_address` VARCHAR(64) NULL,
+  `user_agent` TEXT NULL,
+  `payload` TEXT NULL,
+  `last_activity` INT NOT NULL,
+  `expires_at` DATETIME NOT NULL,
+  INDEX `idx_sessions_user` (`user_id`),
+  CONSTRAINT `fk_session_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `password_resets` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `email` VARCHAR(191) NOT NULL,
+  `token` VARCHAR(191) NOT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_password_resets_email` (`email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `locations` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `short` VARCHAR(60) NOT NULL UNIQUE,
+  `long` VARCHAR(191) NOT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `nodes` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `uuid` CHAR(36) NOT NULL UNIQUE,
+  `public` TINYINT(1) NOT NULL DEFAULT 1,
+  `name` VARCHAR(191) NOT NULL,
+  `description` TEXT NULL,
+  `location_id` INT UNSIGNED NOT NULL,
+  `fqdn` VARCHAR(191) NOT NULL,
+  `scheme` VARCHAR(10) NOT NULL DEFAULT 'http',
+  `behind_proxy` TINYINT(1) NOT NULL DEFAULT 0,
+  `maintenance_mode` TINYINT(1) NOT NULL DEFAULT 0,
+  `memory` INT UNSIGNED NOT NULL DEFAULT 8192,
+  `memory_overallocate` INT NOT NULL DEFAULT 0,
+  `disk` INT UNSIGNED NOT NULL DEFAULT 51200,
+  `disk_overallocate` INT NOT NULL DEFAULT 0,
+  `upload_size` INT UNSIGNED NOT NULL DEFAULT 100,
+  `daemon_token_id` CHAR(16) NOT NULL,
+  `daemon_token` TEXT NOT NULL,
+  `daemonListen` SMALLINT UNSIGNED NOT NULL DEFAULT 8080,
+  `daemonSFTP` SMALLINT UNSIGNED NOT NULL DEFAULT 2022,
+  `daemonBase` VARCHAR(191) NOT NULL DEFAULT './storage/servers',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `fk_node_location` FOREIGN KEY (`location_id`) REFERENCES `locations` (`id`) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `nests` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `uuid` CHAR(36) NOT NULL UNIQUE,
+  `author` VARCHAR(191) NOT NULL,
+  `name` VARCHAR(191) NOT NULL,
+  `description` TEXT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `eggs` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `uuid` CHAR(36) NOT NULL UNIQUE,
+  `nest_id` INT UNSIGNED NOT NULL,
+  `author` VARCHAR(191) NOT NULL,
+  `name` VARCHAR(191) NOT NULL,
+  `description` TEXT NULL,
+  `features` TEXT NULL,
+  `docker_images` TEXT NOT NULL,
+  `file_denylist` TEXT NULL,
+  `startup` TEXT NOT NULL,
+  `config_files` TEXT NULL,
+  `config_startup` TEXT NULL,
+  `config_logs` TEXT NULL,
+  `config_stop` VARCHAR(191) NULL DEFAULT 'stop',
+  `script_install` TEXT NULL,
+  `software_type` VARCHAR(64) NOT NULL DEFAULT 'paper',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `fk_egg_nest` FOREIGN KEY (`nest_id`) REFERENCES `nests` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `egg_variables` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `egg_id` INT UNSIGNED NOT NULL,
+  `name` VARCHAR(191) NOT NULL,
+  `description` TEXT NOT NULL,
+  `env_variable` VARCHAR(191) NOT NULL,
+  `default_value` TEXT NOT NULL,
+  `user_viewable` TINYINT(1) NOT NULL DEFAULT 1,
+  `user_editable` TINYINT(1) NOT NULL DEFAULT 1,
+  `rules` TEXT NOT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `fk_egg_var_egg` FOREIGN KEY (`egg_id`) REFERENCES `eggs` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `servers` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `external_id` VARCHAR(191) NULL UNIQUE,
+  `uuid` CHAR(36) NOT NULL UNIQUE,
+  `uuidShort` CHAR(8) NOT NULL UNIQUE,
+  `node_id` INT UNSIGNED NOT NULL DEFAULT 1,
+  `name` VARCHAR(191) NOT NULL,
+  `description` TEXT NULL,
+  `status` VARCHAR(32) NULL,
+  `skip_scripts` TINYINT(1) NOT NULL DEFAULT 0,
+  `owner_id` INT UNSIGNED NOT NULL,
+  `memory` INT UNSIGNED NOT NULL DEFAULT 1024,
+  `swap` INT NOT NULL DEFAULT 0,
+  `disk` INT UNSIGNED NOT NULL DEFAULT 10240,
+  `io` INT UNSIGNED NOT NULL DEFAULT 500,
+  `cpu` INT UNSIGNED NOT NULL DEFAULT 0,
+  `threads` VARCHAR(64) NULL,
+  `oom_disabled` TINYINT(1) NOT NULL DEFAULT 0,
+  `allocation_id` INT UNSIGNED NULL,
+  `nest_id` INT UNSIGNED NOT NULL,
+  `egg_id` INT UNSIGNED NOT NULL,
+  `startup` TEXT NOT NULL,
+  `image` VARCHAR(191) NOT NULL,
+  `java_path` VARCHAR(255) NULL,
+  `restart_policy` VARCHAR(32) NOT NULL DEFAULT 'on-failure',
+  `allocation_limit` INT UNSIGNED NULL DEFAULT 0,
+  `database_limit` INT UNSIGNED NULL DEFAULT 0,
+  `backup_limit` INT UNSIGNED NOT NULL DEFAULT 0,
+  `installed_at` DATETIME NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_servers_owner` (`owner_id`),
+  INDEX `idx_servers_node` (`node_id`),
+  CONSTRAINT `fk_server_node` FOREIGN KEY (`node_id`) REFERENCES `nodes` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_server_owner` FOREIGN KEY (`owner_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_server_nest` FOREIGN KEY (`nest_id`) REFERENCES `nests` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `fk_server_egg` FOREIGN KEY (`egg_id`) REFERENCES `eggs` (`id`) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `allocations` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `node_id` INT UNSIGNED NOT NULL DEFAULT 1,
+  `ip` VARCHAR(64) NOT NULL,
+  `ip_alias` VARCHAR(191) NULL,
+  `port` INT UNSIGNED NOT NULL,
+  `server_id` INT UNSIGNED NULL,
+  `notes` VARCHAR(191) NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY `uniq_node_ip_port` (`node_id`, `ip`, `port`),
+  INDEX `idx_allocations_server` (`server_id`),
+  CONSTRAINT `fk_allocation_node` FOREIGN KEY (`node_id`) REFERENCES `nodes` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_allocation_server` FOREIGN KEY (`server_id`) REFERENCES `servers` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `server_variables` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `server_id` INT UNSIGNED NOT NULL,
+  `variable_id` INT UNSIGNED NOT NULL,
+  `variable_value` TEXT NOT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY `uniq_server_var` (`server_id`, `variable_id`),
+  CONSTRAINT `fk_server_var_server` FOREIGN KEY (`server_id`) REFERENCES `servers` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_server_var_def` FOREIGN KEY (`variable_id`) REFERENCES `egg_variables` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `subusers` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT UNSIGNED NOT NULL,
+  `server_id` INT UNSIGNED NOT NULL,
+  `permissions` TEXT NOT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY `uniq_subuser` (`user_id`, `server_id`),
+  CONSTRAINT `fk_subuser_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_subuser_server` FOREIGN KEY (`server_id`) REFERENCES `servers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `backups` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `server_id` INT UNSIGNED NOT NULL,
+  `uuid` CHAR(36) NOT NULL UNIQUE,
+  `is_successful` TINYINT(1) NOT NULL DEFAULT 0,
+  `is_locked` TINYINT(1) NOT NULL DEFAULT 0,
+  `name` VARCHAR(191) NOT NULL,
+  `ignored_files` TEXT NOT NULL,
+  `disk` VARCHAR(32) NOT NULL DEFAULT 'wings',
+  `checksum` VARCHAR(191) NULL,
+  `bytes` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `completed_at` DATETIME NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_backups_server` (`server_id`),
+  CONSTRAINT `fk_backup_server` FOREIGN KEY (`server_id`) REFERENCES `servers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `schedules` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `server_id` INT UNSIGNED NOT NULL,
+  `name` VARCHAR(191) NOT NULL,
+  `cron_day_of_week` VARCHAR(64) NOT NULL,
+  `cron_month` VARCHAR(64) NOT NULL,
+  `cron_day_of_month` VARCHAR(64) NOT NULL,
+  `cron_hour` VARCHAR(64) NOT NULL,
+  `cron_minute` VARCHAR(64) NOT NULL,
+  `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+  `is_processing` TINYINT(1) NOT NULL DEFAULT 0,
+  `only_when_online` TINYINT(1) NOT NULL DEFAULT 0,
+  `last_run_at` DATETIME NULL,
+  `next_run_at` DATETIME NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_schedules_server` (`server_id`),
+  CONSTRAINT `fk_schedule_server` FOREIGN KEY (`server_id`) REFERENCES `servers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `tasks` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `schedule_id` INT UNSIGNED NOT NULL,
+  `sequence_id` INT UNSIGNED NOT NULL,
+  `action` VARCHAR(64) NOT NULL,
+  `payload` TEXT NOT NULL,
+  `time_offset` INT UNSIGNED NOT NULL DEFAULT 0,
+  `is_queued` TINYINT(1) NOT NULL DEFAULT 0,
+  `continue_on_failure` TINYINT(1) NOT NULL DEFAULT 0,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_tasks_schedule` (`schedule_id`),
+  CONSTRAINT `fk_task_schedule` FOREIGN KEY (`schedule_id`) REFERENCES `schedules` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `database_hosts` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `name` VARCHAR(191) NOT NULL,
+  `host` VARCHAR(191) NOT NULL,
+  `port` INT UNSIGNED NOT NULL DEFAULT 3306,
+  `username` VARCHAR(191) NOT NULL,
+  `password` TEXT NOT NULL,
+  `max_databases` INT UNSIGNED NULL,
+  `node_id` INT UNSIGNED NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `databases` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `server_id` INT UNSIGNED NOT NULL,
+  `database_host_id` INT UNSIGNED NOT NULL,
+  `database` VARCHAR(191) NOT NULL,
+  `username` VARCHAR(191) NOT NULL,
+  `remote` VARCHAR(191) NOT NULL DEFAULT '%',
+  `password` TEXT NOT NULL,
+  `max_connections` INT NOT NULL DEFAULT 0,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `fk_db_server` FOREIGN KEY (`server_id`) REFERENCES `servers` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_db_host` FOREIGN KEY (`database_host_id`) REFERENCES `database_hosts` (`id`) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `activity_logs` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `batch` CHAR(36) NULL,
+  `event` VARCHAR(191) NOT NULL,
+  `ip` VARCHAR(64) NULL,
+  `description` TEXT NULL,
+  `actor_type` VARCHAR(191) NULL,
+  `actor_id` INT UNSIGNED NULL,
+  `subject_type` VARCHAR(191) NULL,
+  `subject_id` INT UNSIGNED NULL,
+  `api_key_id` INT UNSIGNED NULL,
+  `properties` TEXT NULL,
+  `timestamp` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_activity_event` (`event`),
+  INDEX `idx_activity_subject` (`subject_type`, `subject_id`),
+  INDEX `idx_activity_actor` (`actor_type`, `actor_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `settings` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `key` VARCHAR(191) NOT NULL UNIQUE,
+  `value` TEXT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

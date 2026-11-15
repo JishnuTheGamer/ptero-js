@@ -1,0 +1,6 @@
+{
+  "name": "Pterodactyl Panel",
+  "description": "Standalone Minecraft server management panel migrated from Pterodactyl Panel v1.15.2 to Node.js and Java.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
