@@ -65,7 +65,12 @@ class DatabaseManager {
 
         fs.mkdirSync(path.dirname(config.db.sqlitePath), { recursive: true });
         this.sqliteDb = new DatabaseSync(config.db.sqlitePath);
-        this.sqliteDb.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+        try {
+            this.sqliteDb.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+        } catch {
+            // Ignore if not currently in WAL mode
+        }
+        this.sqliteDb.exec('PRAGMA journal_mode = DELETE; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
         this.driver = 'sqlite';
         this.initialized = true;
         logger.info('Connected to SQLite database', { path: config.db.sqlitePath });

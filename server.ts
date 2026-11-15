@@ -37,15 +37,20 @@ async function bootstrap() {
     );
 
     app.use(cookieParser());
-    app.use(express.json({ limit: '10mb' }));
-    app.use(express.text({ type: 'text/plain', limit: '10mb' }));
-    app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+    app.use(express.json({ limit: '50mb' }));
+    app.use(express.text({ type: 'text/plain', limit: '50mb' }));
+    app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-    // Serve original Pterodactyl static assets (React webpack bundle, AdminLTE, favicons, vendor JS/CSS)
+    // Serve original Pterodactyl static assets; revalidate JS assets immediately so upload/UI fixes take effect right away
     app.use(
         express.static(config.paths.frontendPublicDir, {
-            maxAge: '1h',
+            maxAge: 0,
             index: false,
+            setHeaders: (res, filePath) => {
+                if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
+                    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+                }
+            },
         })
     );
 
@@ -69,6 +74,8 @@ async function bootstrap() {
     app.use(spaRouter);
 
     const httpServer = http.createServer(app);
+    httpServer.requestTimeout = 0;
+    httpServer.headersTimeout = 60000;
     attachWebSocketServer(httpServer);
 
     processManager.startMonitor();

@@ -54,16 +54,27 @@ const Row = ({ icon, title, ...props }: RowProps) => (
     </StyledRow>
 );
 
+import axios from 'axios';
+import getFileUploadUrl from '@/api/server/files/getFileUploadUrl';
+import { faCloudUploadAlt } from '@fortawesome/free-solid-svg-icons';
+
+// Resume Upload action added in FileDropdownMenu for *.part files
 const FileDropdownMenu = ({ file }: { file: FileObject }) => {
     const onClickRef = useRef<DropdownMenu>(null);
+    const resumeInputRef = useRef<HTMLInputElement>(null);
     const [showSpinner, setShowSpinner] = useState(false);
     const [modal, setModal] = useState<ModalType | null>(null);
     const [showConfirmation, setShowConfirmation] = useState(false);
 
     const uuid = ServerContext.useStoreState((state) => state.server.data!.uuid);
     const { mutate } = useFileManagerSwr();
-    const { clearAndAddHttpError, clearFlashes } = useFlash();
+    const { clearAndAddHttpError, clearFlashes, addFlash } = useFlash();
     const directory = ServerContext.useStoreState((state) => state.files.directory);
+    const { pushFileUpload, setUploadProgress, removeFileUpload } = ServerContext.useStoreActions(
+        (actions) => actions.files
+    );
+
+    const isPartFile = file.isFile && file.name.endsWith('.part') && file.name.length > 5;
 
     useEventListener(`pterodactyl:files:ctx:${file.key}`, (e: CustomEvent) => {
         if (onClickRef.current) {
@@ -100,8 +111,16 @@ const FileDropdownMenu = ({ file }: { file: FileObject }) => {
 
         getFileDownloadUrl(uuid, join(directory, file.name))
             .then((url) => {
-                // @ts-expect-error this is valid
-                window.location = url;
+                const parsed = new URL(url, window.location.origin);
+                const downloadUrl = `${window.location.origin}${parsed.pathname}${parsed.search}`;
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = file.name;
+                link.rel = 'noopener';
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
             })
             .catch((error) => clearAndAddHttpError({ key: 'files', error }))
             .then(() => setShowSpinner(false));
@@ -127,8 +146,90 @@ const FileDropdownMenu = ({ file }: { file: FileObject }) => {
             .then(() => setShowSpinner(false));
     };
 
+    const handleResumeFilePicked = async (selectedFile: File) => {
+        clearFlashes('files');
+        setShowSpinner(true);
+        const controller = new AbortController();
+        try {
+            const refreshUrl = async () => {
+                const raw = await getFileUploadUrl(uuid);
+                const parsed = new URL(raw, window.location.origin);
+                return { baseUrl: `${window.location.origin}${parsed.pathname}`, token: parsed.searchParams.get('token') || '' };
+            };
+            let { baseUrl, token } = await refreshUrl();
+            const infoRes = await axios.get(`${baseUrl}/part-info`, {
+                params: { token, directory, partName: file.name },
+            });
+            const info = infoRes.data;
+            if (!info?.found) {
+                addFlash({ key: 'files', type: 'error', title: 'Error', message: `Partial upload '${file.name}' not found.` });
+                return;
+            }
+            if (selectedFile.name !== info.fileName) {
+                addFlash({
+                    key: 'files',
+                    type: 'error',
+                    title: 'Verification Failed',
+                    message: `Expected '${info.fileName}', but selected '${selectedFile.name}'.`,
+                });
+                return;
+            }
+            if (info.totalSize > 0 && selectedFile.size !== info.totalSize) {
+                addFlash({
+                    key: 'files',
+                    type: 'error',
+                    title: 'Verification Failed',
+                    message: `File size mismatch for '${info.fileName}'. Expected ${info.totalSize} bytes.`,
+                });
+                return;
+            }
+            setShowSpinner(false);
+            const uploadId = info.uploadId;
+            const chunkSize = info.chunkSize || 10 * 1024 * 1024;
+            const totalChunks = Math.ceil(selectedFile.size / chunkSize);
+            const doneSet = new Set<number>(info.uploadedChunks || []);
+            let loadedBase = info.uploadedBytes || 0;
+            pushFileUpload({ name: selectedFile.name, data: { abort: controller, loaded: loadedBase, total: selectedFile.size } });
+            for (let idx = 0; idx < totalChunks; idx++) {
+                if (controller.signal.aborted) {
+                    await axios.delete(`${baseUrl}/chunk`, { params: { token, uploadId, directory, fileName: selectedFile.name, deletePart: 'true' } }).catch(() => undefined);
+                    throw new DOMException('Aborted', 'AbortError');
+                }
+                if (doneSet.has(idx)) continue;
+                const blob = selectedFile.slice(idx * chunkSize, Math.min(selectedFile.size, (idx + 1) * chunkSize));
+                const fd = new FormData();
+                fd.append('chunk', blob, selectedFile.name);
+                await axios.post(`${baseUrl}/chunk`, fd, {
+                    signal: controller.signal,
+                    params: { token, uploadId, chunkIndex: idx, totalChunks, chunkSize, totalSize: selectedFile.size, directory, fileName: selectedFile.name },
+                });
+                loadedBase += blob.size;
+                setUploadProgress({ name: selectedFile.name, loaded: Math.min(selectedFile.size, loadedBase) });
+            }
+            await axios.post(`${baseUrl}/complete`, { uploadId, directory, fileName: selectedFile.name, totalChunks, totalSize: selectedFile.size }, { signal: controller.signal, params: { token } });
+            removeFileUpload(selectedFile.name);
+            await mutate();
+        } catch (error) {
+            removeFileUpload(selectedFile.name);
+            await mutate().catch(() => undefined);
+            if (!controller.signal.aborted) clearAndAddHttpError({ key: 'files', error });
+        } finally {
+            setShowSpinner(false);
+        }
+    };
+
     return (
         <>
+            <input
+                type={'file'}
+                ref={resumeInputRef}
+                style={{ display: 'none' }}
+                onChange={(e) => {
+                    const picked = e.currentTarget.files?.[0];
+                    if (picked) void handleResumeFilePicked(picked);
+                    e.currentTarget.value = '';
+                }}
+            />
             <Dialog.Confirm
                 open={showConfirmation}
                 onClose={() => setShowConfirmation(false)}
@@ -171,6 +272,15 @@ const FileDropdownMenu = ({ file }: { file: FileObject }) => {
                     <Row onClick={() => setModal('move')} icon={faLevelUpAlt} title={'Move'} />
                     <Row onClick={() => setModal('chmod')} icon={faFileCode} title={'Permissions'} />
                 </Can>
+                {isPartFile && (
+                    <Can action={'file.create'}>
+                        <Row
+                            onClick={() => resumeInputRef.current && resumeInputRef.current.click()}
+                            icon={faCloudUploadAlt}
+                            title={'Resume Upload'}
+                        />
+                    </Can>
+                )}
                 {file.isFile && (
                     <Can action={'file.create'}>
                         <Row onClick={doCopy} icon={faCopy} title={'Copy'} />

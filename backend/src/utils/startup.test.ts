@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     buildJavaLaunchArgs,
+    buildSafeServerJavaArgs,
     buildServerStartupCommand,
     parseCommandArgs,
     renderStartupCommand,
@@ -37,4 +38,33 @@ test('validateEggVariableValue enforces required and regex rules', () => {
     assert.ok(validateEggVariableValue('', 'required|string'));
     assert.equal(validateEggVariableValue('server.jar', 'required|regex:/^([\\w\\d._-]+)(\\.jar)$/'), null);
     assert.ok(validateEggVariableValue('bad;rm -rf /', 'required|regex:/^([\\w\\d._-]+)(\\.jar)$/'));
+});
+
+test('buildSafeServerJavaArgs disables JLine/ANSI and caps JVM heap safely', () => {
+    const args = buildSafeServerJavaArgs(
+        'java -Xms128M -XX:MaxRAMPercentage=95.0 -Dterminal.jline=true -Dterminal.ansi=true -jar {{SERVER_JARFILE}} nogui',
+        { SERVER_JARFILE: 'paper.jar' },
+        2048,
+        { disableJline: true, hostMemoryMb: 1000 }
+    );
+    assert.equal(args.includes('-XX:MaxRAMPercentage=95.0'), false);
+    assert.equal(args.includes('-Dterminal.ansi=true'), false);
+    assert.equal(args.includes('-Dterminal.jline=true'), false);
+    assert.ok(args.includes('-Dterminal.jline=false'));
+    assert.ok(args.includes('-Dterminal.ansi=false'));
+    // host ceiling = floor(1000 * 0.85) = 850M
+    assert.ok(args.includes('-Xmx850M'));
+    const jlineIdx = args.indexOf('-Dterminal.jline=false');
+    const jarIdx = args.indexOf('-jar');
+    assert.ok(jlineIdx >= 0 && jarIdx > jlineIdx);
+
+    const unlimited = buildSafeServerJavaArgs(
+        'java -Xms128M -Xmx{{SERVER_MEMORY}}M -jar {{SERVER_JARFILE}} nogui',
+        { SERVER_MEMORY: 0, SERVER_JARFILE: 'paper.jar' },
+        0,
+        { disableJline: true }
+    );
+    assert.equal(unlimited.some((a) => a.startsWith('-Xmx')), false);
+    assert.ok(unlimited.includes('-Dterminal.jline=false'));
+    assert.ok(unlimited.includes('-Dterminal.ansi=false'));
 });

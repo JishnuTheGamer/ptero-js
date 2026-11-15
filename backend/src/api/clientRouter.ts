@@ -1,8 +1,15 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import bcrypt from 'bcryptjs';
 import { Request, Response, Router } from 'express';
 import jwt from 'jsonwebtoken';
-import { createServerBackup, deleteServerBackup, restoreServerBackup } from '../backups/backupManager';
+import {
+    createServerBackup,
+    deleteServerBackup,
+    resolveBackupArchivePath,
+    restoreServerBackup,
+    sanitizeBackupDownloadFilename,
+} from '../backups/backupManager';
 import { SYSTEM_PERMISSIONS } from '../auth/permissions';
 import { config } from '../config/index';
 import { db } from '../database/connection';
@@ -556,7 +563,7 @@ router.get('/servers/:server/files/upload', requireServerAccess('file.create'), 
             purpose: 'upload',
         },
         config.jwtSecret,
-        { expiresIn: '15m' }
+        { expiresIn: '6h' }
     );
     res.json({
         object: 'signed_url',
@@ -761,15 +768,32 @@ router.get('/servers/:server/backups/:backup/download', requireServerAccess('bac
         res.status(404).json(formatApiError(404, 'NotFoundHttpException', 'Backup not found.'));
         return;
     }
+    if (!row.is_successful) {
+        res.status(400).json(formatApiError(400, 'BackupNotCompletedException', 'Backup has not completed successfully yet.'));
+        return;
+    }
+    let archivePath: string;
+    try {
+        archivePath = resolveBackupArchivePath(req.server!.uuid, row.uuid);
+    } catch {
+        res.status(404).json(formatApiError(404, 'NotFoundHttpException', 'Backup archive path is invalid.'));
+        return;
+    }
+    if (!fs.existsSync(archivePath) || !fs.statSync(archivePath).isFile()) {
+        res.status(404).json(formatApiError(404, 'NotFoundHttpException', 'Backup archive file not found on disk.'));
+        return;
+    }
+    const downloadFilename = sanitizeBackupDownloadFilename(row.name, row.uuid);
     const token = jwt.sign(
         {
             server_uuid: req.server!.uuid,
             user_id: req.user!.id,
             backup_uuid: row.uuid,
+            filename: downloadFilename,
             purpose: 'backup',
         },
         config.jwtSecret,
-        { expiresIn: '5m' }
+        { expiresIn: '15m' }
     );
     res.json({
         object: 'signed_url',
@@ -1306,7 +1330,16 @@ router.put('/servers/:server/startup/variable', requireServerAccess('startup.upd
         ]);
     }
 
-    res.json(transformEggVariable({ ...eggVar, server_value: value }));
+    const { allocations, variables } = await loadServerRelations(server.id, server.egg_id);
+    const transformed = transformServer(server, req.user!.id, allocations, variables, true);
+
+    res.json({
+        ...transformEggVariable({ ...eggVar, server_value: value }),
+        meta: {
+            startup_command: transformed.attributes.invocation,
+            raw_startup_command: server.startup,
+        },
+    });
 });
 
 router.post('/servers/:server/settings/rename', requireServerAccess('settings.rename'), async (req: Request, res: Response) => {

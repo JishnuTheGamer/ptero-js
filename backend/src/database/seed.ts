@@ -1,7 +1,5 @@
 import crypto from 'node:crypto';
-import bcrypt from 'bcryptjs';
 import { config } from '../config/index';
-import { logger } from '../utils/logger';
 import { db } from './connection';
 
 export interface EggSeedDefinition {
@@ -29,13 +27,14 @@ const MINECRAFT_EGGS: EggSeedDefinition[] = [
         name: 'Paper',
         softwareType: 'paper',
         description: 'High performance Spigot fork that aims to fix gameplay and mechanics inconsistencies.',
-        startup: 'java -Xms128M -XX:MaxRAMPercentage=95.0 -Dterminal.jline=false -Dterminal.ansi=true -jar {{SERVER_JARFILE}} nogui',
+        startup: 'java -Xms128M -XX:MaxRAMPercentage=95.0 -Dterminal.jline=false -Dterminal.ansi=false -jar {{SERVER_JARFILE}} nogui',
         dockerImages: {
+            'Java 26': 'java:26',
+            'Java 25': 'java:25',
             'Java 21': 'java:21',
             'Java 17': 'java:17',
             'Java 11': 'java:11',
             'Java 8': 'java:8',
-            'Java 25': 'java:25',
             'Auto Detect': 'java:auto',
         },
         configFiles: {
@@ -84,8 +83,10 @@ const MINECRAFT_EGGS: EggSeedDefinition[] = [
         name: 'Purpur',
         softwareType: 'purpur',
         description: 'Purpur is a drop-in replacement for Paper servers designed for configurability and new gameplay features.',
-        startup: 'java -Xms128M -XX:MaxRAMPercentage=95.0 -Dterminal.jline=false -Dterminal.ansi=true -jar {{SERVER_JARFILE}} nogui',
+        startup: 'java -Xms128M -XX:MaxRAMPercentage=95.0 -Dterminal.jline=false -Dterminal.ansi=false -jar {{SERVER_JARFILE}} nogui',
         dockerImages: {
+            'Java 26': 'java:26',
+            'Java 25': 'java:25',
             'Java 21': 'java:21',
             'Java 17': 'java:17',
             'Java 8': 'java:8',
@@ -135,6 +136,8 @@ const MINECRAFT_EGGS: EggSeedDefinition[] = [
         description: 'Official Minecraft: Java Edition server directly from Mojang.',
         startup: 'java -Xms128M -XX:MaxRAMPercentage=95.0 -jar {{SERVER_JARFILE}} nogui',
         dockerImages: {
+            'Java 26': 'java:26',
+            'Java 25': 'java:25',
             'Java 21': 'java:21',
             'Java 17': 'java:17',
             'Java 8': 'java:8',
@@ -175,6 +178,8 @@ const MINECRAFT_EGGS: EggSeedDefinition[] = [
         description: 'Lightweight, experimental modding toolchain for Minecraft.',
         startup: 'java -Xms128M -XX:MaxRAMPercentage=95.0 -jar {{SERVER_JARFILE}} nogui',
         dockerImages: {
+            'Java 26': 'java:26',
+            'Java 25': 'java:25',
             'Java 21': 'java:21',
             'Java 17': 'java:17',
             'Java 8': 'java:8',
@@ -224,6 +229,8 @@ const MINECRAFT_EGGS: EggSeedDefinition[] = [
         description: 'Minecraft Forge server modding platform.',
         startup: 'java -Xms128M -XX:MaxRAMPercentage=95.0 -jar {{SERVER_JARFILE}} nogui',
         dockerImages: {
+            'Java 26': 'java:26',
+            'Java 25': 'java:25',
             'Java 21': 'java:21',
             'Java 17': 'java:17',
             'Java 8': 'java:8',
@@ -273,6 +280,8 @@ const MINECRAFT_EGGS: EggSeedDefinition[] = [
         description: 'Modern community fork of Minecraft Forge for Minecraft 1.20.2+.',
         startup: 'java -Xms128M -XX:MaxRAMPercentage=95.0 -jar {{SERVER_JARFILE}} nogui',
         dockerImages: {
+            'Java 26': 'java:26',
+            'Java 25': 'java:25',
             'Java 21': 'java:21',
             'Java 17': 'java:17',
             'Auto Detect': 'java:auto',
@@ -321,6 +330,8 @@ const MINECRAFT_EGGS: EggSeedDefinition[] = [
         description: 'Spigot Minecraft server built via official SpigotMC BuildTools.',
         startup: 'java -Xms128M -XX:MaxRAMPercentage=95.0 -jar {{SERVER_JARFILE}} nogui',
         dockerImages: {
+            'Java 26': 'java:26',
+            'Java 25': 'java:25',
             'Java 21': 'java:21',
             'Java 17': 'java:17',
             'Java 8': 'java:8',
@@ -359,8 +370,10 @@ const MINECRAFT_EGGS: EggSeedDefinition[] = [
         name: 'Folia',
         softwareType: 'folia',
         description: 'Multithreaded PaperMC fork adding regionised multithreading to dedicated servers.',
-        startup: 'java -Xms128M -XX:MaxRAMPercentage=95.0 -Dterminal.jline=false -Dterminal.ansi=true -jar {{SERVER_JARFILE}} nogui',
+        startup: 'java -Xms128M -XX:MaxRAMPercentage=95.0 -Dterminal.jline=false -Dterminal.ansi=false -jar {{SERVER_JARFILE}} nogui',
         dockerImages: {
+            'Java 26': 'java:26',
+            'Java 25': 'java:25',
             'Java 21': 'java:21',
             'Java 17': 'java:17',
             'Auto Detect': 'java:auto',
@@ -468,11 +481,30 @@ export async function runSeeders(): Promise<void> {
     }
 
     for (const def of MINECRAFT_EGGS) {
-        const existingEgg = await db.queryOne<{ id: number }>(
-            'SELECT id FROM eggs WHERE nest_id = ? AND software_type = ?',
+        const existingEgg = await db.queryOne<{ id: number; docker_images: string }>(
+            'SELECT id, docker_images FROM eggs WHERE nest_id = ? AND software_type = ?',
             [nest.id, def.softwareType]
         );
-        if (!existingEgg) {
+        if (existingEgg) {
+            try {
+                const parsed = JSON.parse(existingEgg.docker_images || '{}') as Record<string, string>;
+                let updated = false;
+                for (const [label, image] of Object.entries(def.dockerImages)) {
+                    if (!(label in parsed)) {
+                        parsed[label] = image;
+                        updated = true;
+                    }
+                }
+                if (updated) {
+                    await db.execute('UPDATE eggs SET docker_images = ? WHERE id = ?', [
+                        JSON.stringify(parsed),
+                        existingEgg.id,
+                    ]);
+                }
+            } catch {
+                // ignore malformed custom docker_images JSON
+            }
+        } else {
             const eggRes = await db.execute(
                 `INSERT INTO eggs (
                     uuid, nest_id, author, name, description, features, docker_images,
@@ -531,20 +563,5 @@ export async function runSeeders(): Promise<void> {
         if (!exists) {
             await db.execute('INSERT INTO settings (`key`, value) VALUES (?, ?)', [k, v]);
         }
-    }
-
-    // 6. Seed initial admin user ONLY if users table is empty
-    const userCount = await db.queryOne<{ cnt: number }>('SELECT COUNT(*) AS cnt FROM users');
-    if (!userCount || userCount.cnt === 0) {
-        const initialPassword = process.env.ADMIN_PASSWORD || 'Pterodactyl123!';
-        const hash = await bcrypt.hash(initialPassword, 10);
-        const email = process.env.ADMIN_EMAIL || 'admin@pterodactyl.local';
-        const username = process.env.ADMIN_USERNAME || 'admin';
-        await db.execute(
-            `INSERT INTO users (uuid, username, email, name_first, name_last, password, language, root_admin, gravatar)
-             VALUES (?, ?, ?, ?, ?, ?, 'en', 1, 1)`,
-            [crypto.randomUUID(), username, email, 'System', 'Administrator', hash]
-        );
-        logger.info('Seeded initial root administrator account', { email, username });
     }
 }

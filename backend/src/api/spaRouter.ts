@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Request, Response, Router } from 'express';
@@ -20,6 +21,19 @@ try {
 } catch {
     // use default
 }
+
+let assetVersion = 'v5';
+try {
+    const h = crypto.createHash('sha1');
+    for (const rel of [cachedMainBundle.replace(/^\//, ''), 'assets/552.2e37f7cd.js']) {
+        const p = path.join(config.paths.frontendPublicDir, rel);
+        if (fs.existsSync(p)) h.update(fs.readFileSync(p));
+    }
+    assetVersion = h.digest('hex').slice(0, 10);
+} catch {
+    // fallback
+}
+const versionedMainBundle = `${cachedMainBundle}?v=${assetVersion}`;
 
 router.get('/locales/locale.json', (req: Request, res: Response) => {
     const locales = String(req.query.locale || 'en')
@@ -98,13 +112,14 @@ async function renderSpa(req: Request, res: Response) {
         },
     };
 
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.render('wrapper', {
         csrfToken,
         pterodactylUser,
         siteConfiguration,
         isAuthRoute,
         bodyClass: isAuthRoute ? 'bg-neutral-900' : 'bg-neutral-800',
-        mainBundleSrc: cachedMainBundle,
+        mainBundleSrc: versionedMainBundle,
     });
 }
 

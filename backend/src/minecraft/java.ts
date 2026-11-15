@@ -75,6 +75,17 @@ async function inspectJavaBinary(javaBin: string): Promise<JavaRuntime | null> {
     }
 }
 
+export type SupportedJavaMajor = 8 | 11 | 17 | 21 | 25 | 26;
+
+export function normalizeSupportedJavaMajor(major: number): SupportedJavaMajor {
+    if (major <= 8) return 8;
+    if (major <= 11) return 11;
+    if (major <= 17) return 17;
+    if (major <= 21) return 21;
+    if (major <= 25) return 25;
+    return 26;
+}
+
 export async function discoverJavaRuntimes(): Promise<JavaRuntime[]> {
     const candidates = new Set<string>();
 
@@ -82,16 +93,21 @@ export async function discoverJavaRuntimes(): Promise<JavaRuntime[]> {
         candidates.add(config.defaultJavaPath);
     }
 
-    // 1. Project-local runtime/java/*
-    if (fs.existsSync(config.paths.javaRuntimeDir)) {
-        for (const entry of fs.readdirSync(config.paths.javaRuntimeDir)) {
-            const bin = path.join(config.paths.javaRuntimeDir, entry, 'bin', 'java');
-            candidates.add(bin);
+    // 1. Project-local runtime/java/* and .data/java/*
+    const localRoots = [
+        config.paths.javaRuntimeDir,
+        path.resolve(config.rootDir, '.data', 'java'),
+    ];
+    for (const root of localRoots) {
+        if (fs.existsSync(root)) {
+            for (const entry of fs.readdirSync(root)) {
+                candidates.add(path.join(root, entry, 'bin', 'java'));
+            }
         }
     }
 
-    // 2. Standard Linux JVM paths
-    for (const base of ['/usr/lib/jvm', '/opt/java', '/usr/java']) {
+    // 2. Standard Linux & JTG JVM paths
+    for (const base of ['/opt/jtg-java', '/opt/java', '/usr/lib/jvm', '/usr/java']) {
         if (fs.existsSync(base)) {
             for (const entry of fs.readdirSync(base)) {
                 candidates.add(path.join(base, entry, 'bin', 'java'));
@@ -185,6 +201,12 @@ export async function selectJavaRuntime(opts: {
             }
             return { runtime: exact, requiredMajor, compatible: true };
         }
+        return {
+            runtime: null,
+            requiredMajor: explicitMajor,
+            compatible: false,
+            reason: `Requested Java ${explicitMajor} runtime is not installed yet.`,
+        };
     }
 
     // Prefer configured default Java if compatible
@@ -195,7 +217,7 @@ export async function selectJavaRuntime(opts: {
         }
     }
 
-    // Pick lowest compatible version >= mcReq (or highest available >= mcReq)
+    // Pick lowest compatible version >= mcReq
     const compatibleRuntimes = runtimes.filter((r) => r.majorVersion >= mcReq).sort((a, b) => a.majorVersion - b.majorVersion);
     if (compatibleRuntimes.length > 0) {
         return { runtime: compatibleRuntimes[0], requiredMajor: mcReq, compatible: true };
@@ -210,26 +232,40 @@ export async function selectJavaRuntime(opts: {
 }
 
 export async function installTemurinJava(
-    majorVersion: 8 | 11 | 17 | 21 | 25,
+    majorVersion: SupportedJavaMajor,
     onProgress?: (msg: string) => void
 ): Promise<JavaRuntime> {
     const arch = process.arch === 'arm64' ? 'aarch64' : 'x64';
-    const url = `https://api.adoptium.net/v3/binary/latest/${majorVersion}/ga/linux/${arch}/jre/hotspot/normal/eclipse`;
+    const candidateUrls = [
+        `https://api.adoptium.net/v3/binary/latest/${majorVersion}/ga/linux/${arch}/jre/hotspot/normal/eclipse`,
+        `https://api.adoptium.net/v3/binary/latest/${majorVersion}/ga/linux/${arch}/jdk/hotspot/normal/eclipse`,
+        `https://api.adoptium.net/v3/binary/latest/${majorVersion}/ea/linux/${arch}/jre/hotspot/normal/eclipse`,
+        `https://api.adoptium.net/v3/binary/latest/${majorVersion}/ea/linux/${arch}/jdk/hotspot/normal/eclipse`,
+    ];
     const targetDir = path.join(config.paths.javaRuntimeDir, `temurin-${majorVersion}`);
     const archivePath = path.join(config.paths.javaRuntimeDir, `temurin-${majorVersion}.tar.gz`);
 
     fs.mkdirSync(targetDir, { recursive: true });
-    onProgress?.(`Downloading Eclipse Temurin JRE ${majorVersion} (${arch})...`);
-    logger.info('Downloading Temurin Java runtime', { majorVersion, arch, url });
+    onProgress?.(`Provisioning Eclipse Temurin Java ${majorVersion} (${arch}) into ${targetDir}...`);
 
-    const res = await fetch(url, { redirect: 'follow' });
-    if (!res.ok) {
-        throw new Error(`Failed to download Temurin Java ${majorVersion}: HTTP ${res.status}`);
+    let downloadedBuf: Buffer | null = null;
+    let lastStatus = 0;
+    for (const url of candidateUrls) {
+        logger.info('Downloading Temurin Java runtime', { majorVersion, arch, url });
+        const res = await fetch(url, { redirect: 'follow' });
+        if (res.ok) {
+            downloadedBuf = Buffer.from(await res.arrayBuffer());
+            break;
+        }
+        lastStatus = res.status;
     }
-    const buf = Buffer.from(await res.arrayBuffer());
-    fs.writeFileSync(archivePath, buf);
 
-    onProgress?.(`Extracting Temurin JRE ${majorVersion}...`);
+    if (!downloadedBuf) {
+        throw new Error(`Failed to download Temurin Java ${majorVersion}: HTTP ${lastStatus}`);
+    }
+    fs.writeFileSync(archivePath, downloadedBuf);
+
+    onProgress?.(`Extracting Temurin Java ${majorVersion}...`);
     await new Promise<void>((resolve, reject) => {
         const tarProc = spawn('tar', ['-xzf', archivePath, '-C', targetDir, '--strip-components=1']);
         let stderr = '';
@@ -251,4 +287,46 @@ export async function installTemurinJava(
     }
     onProgress?.(`Installed Java ${runtime.rawVersion} at ${runtime.path}`);
     return runtime;
+}
+
+export async function ensureJavaRuntime(
+    opts: {
+        requestedImage?: string;
+        mcVersion?: string;
+        overridePath?: string;
+        defaultPath?: string;
+    },
+    onProgress?: (msg: string) => void
+): Promise<{
+    runtime: JavaRuntime | null;
+    requiredMajor: number;
+    compatible: boolean;
+    reason?: string;
+}> {
+    const initial = await selectJavaRuntime(opts);
+    if (initial.compatible && initial.runtime) {
+        return initial;
+    }
+
+    // Do not auto-provision if user explicitly configured an invalid overridePath or selected an incompatible older Java for MC version
+    if (opts.overridePath || (initial.runtime && initial.reason?.includes('is too old'))) {
+        return initial;
+    }
+
+    const targetMajor = normalizeSupportedJavaMajor(initial.requiredMajor);
+    try {
+        const installed = await installTemurinJava(targetMajor, onProgress);
+        return {
+            runtime: installed,
+            requiredMajor: initial.requiredMajor,
+            compatible: installed.majorVersion >= requiredJavaForMinecraft(opts.mcVersion || 'latest'),
+        };
+    } catch (err) {
+        return {
+            runtime: initial.runtime,
+            requiredMajor: initial.requiredMajor,
+            compatible: false,
+            reason: `${initial.reason || `Java ${targetMajor} missing.`} Auto-provision failed: ${(err as Error).message}`,
+        };
+    }
 }

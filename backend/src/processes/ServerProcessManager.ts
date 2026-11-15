@@ -3,10 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config/index';
 import { db } from '../database/connection';
-import { selectJavaRuntime } from '../minecraft/java';
+import { ensureJavaRuntime } from '../minecraft/java';
 import { installMinecraftServer, SupportedSoftware, writeEulaFile, writeServerProperties } from '../minecraft/software';
 import { logger } from '../utils/logger';
-import { buildJavaLaunchArgs } from '../utils/startup';
+import { buildSafeServerJavaArgs } from '../utils/startup';
 
 export type ServerPowerState = 'offline' | 'starting' | 'running' | 'stopping';
 
@@ -350,12 +350,15 @@ class ServerProcessManager {
             "SELECT value FROM settings WHERE `key` = 'settings:java:default_path'"
         );
 
-        const javaCheck = await selectJavaRuntime({
-            requestedImage: server.image,
-            mcVersion,
-            overridePath: server.java_path || undefined,
-            defaultPath: defaultJavaSetting?.value || config.defaultJavaPath || undefined,
-        });
+        const javaCheck = await ensureJavaRuntime(
+            {
+                requestedImage: server.image,
+                mcVersion,
+                overridePath: server.java_path || undefined,
+                defaultPath: defaultJavaSetting?.value || config.defaultJavaPath || undefined,
+            },
+            (msg) => this.appendLog(server.uuid, managed, msg, 'daemon message')
+        );
 
         if (!javaCheck.runtime || !javaCheck.compatible) {
             const errMsg = javaCheck.reason || `Compatible Java (${javaCheck.requiredMajor}+) is required.`;
@@ -381,8 +384,8 @@ class ServerProcessManager {
             await this.installServer(serverId);
         }
 
-        // Build safe Java arguments without shell execution; omit -Xmx when memory is 0 (Unlimited)
-        const jvmArgs = buildJavaLaunchArgs(
+        // Build safe Java arguments without shell execution; cap heap safely and disable JLine/ANSI for piped stdin
+        const jvmArgs = buildSafeServerJavaArgs(
             server.startup,
             {
                 ...envMap,
@@ -390,7 +393,8 @@ class ServerProcessManager {
                 SERVER_IP: server.primary_ip || '0.0.0.0',
                 SERVER_PORT: server.primary_port || 25565,
             },
-            Number(server.memory || 0)
+            Number(server.memory || 0),
+            { disableJline: true }
         );
 
         managed.state = 'starting';
@@ -410,7 +414,7 @@ class ServerProcessManager {
             env: {
                 PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
                 HOME: serverDir,
-                TERM: 'xterm-256color',
+                TERM: 'dumb',
             },
         });
 
@@ -548,7 +552,8 @@ class ServerProcessManager {
         if (!managed || !managed.process || !managed.process.stdin?.writable) {
             throw new Error('Server is not running');
         }
-        managed.process.stdin.write(command + '\n');
+        const cleanCmd = String(command ?? '').replace(/\r?\n$/, '');
+        managed.process.stdin.write(cleanCmd + '\n');
     }
 
     async stopAllServers(): Promise<void> {

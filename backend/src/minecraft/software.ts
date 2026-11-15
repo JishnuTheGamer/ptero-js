@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { logger } from '../utils/logger';
-import { selectJavaRuntime } from './java';
+import { ensureJavaRuntime } from './java';
 
 export type SupportedSoftware = 'paper' | 'purpur' | 'vanilla' | 'fabric' | 'forge' | 'neoforge' | 'spigot' | 'folia';
 
@@ -300,7 +300,7 @@ async function installForge(opts: InstallOptions): Promise<string> {
     const installerPath = path.join(opts.serverDir, `forge-${fullVer}-installer.jar`);
     await downloadFileVerified(installerUrl, installerPath, undefined, log);
 
-    const javaSel = await selectJavaRuntime({ mcVersion });
+    const javaSel = await ensureJavaRuntime({ mcVersion }, log);
     if (!javaSel.runtime || !javaSel.compatible) {
         throw new Error(javaSel.reason || 'Compatible Java runtime required to run Forge installer');
     }
@@ -342,7 +342,7 @@ async function installNeoForge(opts: InstallOptions): Promise<string> {
     const installerPath = path.join(opts.serverDir, `neoforge-${selected}-installer.jar`);
     await downloadFileVerified(installerUrl, installerPath, undefined, log);
 
-    const javaSel = await selectJavaRuntime({ mcVersion: opts.mcVersion });
+    const javaSel = await ensureJavaRuntime({ mcVersion: opts.mcVersion }, log);
     if (!javaSel.runtime || !javaSel.compatible) {
         throw new Error(javaSel.reason || 'Compatible Java runtime required to run NeoForge installer');
     }
@@ -366,7 +366,7 @@ async function installSpigot(opts: InstallOptions): Promise<string> {
     );
 
     const mcVersion = opts.mcVersion && opts.mcVersion !== 'latest' ? opts.mcVersion : 'latest';
-    const javaSel = await selectJavaRuntime({ mcVersion });
+    const javaSel = await ensureJavaRuntime({ mcVersion }, log);
     if (!javaSel.runtime || !javaSel.compatible) {
         throw new Error(javaSel.reason || 'Compatible Java runtime required for Spigot BuildTools');
     }

@@ -8,10 +8,52 @@ import { getServerRoot } from '../files/fileManager';
 import { processManager } from '../processes/ServerProcessManager';
 import { logger } from '../utils/logger';
 
+function sanitizeUuidSegment(value: string, label: string): string {
+    const clean = String(value || '').trim();
+    if (!clean || clean === '.' || clean === '..' || !/^[a-zA-Z0-9_-]+$/.test(clean)) {
+        throw new Error(`Invalid ${label}`);
+    }
+    return clean;
+}
+
+export function resolveBackupArchivePath(serverUuid: string, backupUuid: string): string {
+    const safeServer = sanitizeUuidSegment(serverUuid, 'server UUID');
+    const safeBackup = sanitizeUuidSegment(backupUuid, 'backup UUID');
+    return path.join(config.paths.backupsDir, safeServer, `${safeBackup}.tar.gz`);
+}
+
 export function getBackupArchivePath(serverUuid: string, backupUuid: string): string {
-    const dir = path.join(config.paths.backupsDir, serverUuid);
-    fs.mkdirSync(dir, { recursive: true });
-    return path.join(dir, `${backupUuid}.tar.gz`);
+    const archivePath = resolveBackupArchivePath(serverUuid, backupUuid);
+    fs.mkdirSync(path.dirname(archivePath), { recursive: true });
+    return archivePath;
+}
+
+export function sanitizeBackupDownloadFilename(name: string, backupUuid: string): string {
+    const base = String(name || '')
+        .replace(/[^a-zA-Z0-9._ -]+/g, '-')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^[-.]+|[-.]+$/g, '')
+        .slice(0, 80);
+    if (!base) {
+        return `${sanitizeUuidSegment(backupUuid, 'backup UUID')}.tar.gz`;
+    }
+    return base.endsWith('.tar.gz') ? base : `${base}.tar.gz`;
+}
+
+async function computeFileSha1(filePath: string): Promise<{ checksum: string; bytes: number }> {
+    const stat = fs.statSync(filePath);
+    const hash = crypto.createHash('sha1');
+    await new Promise<void>((resolve, reject) => {
+        const stream = fs.createReadStream(filePath);
+        stream.on('data', (chunk) => hash.update(chunk));
+        stream.on('error', reject);
+        stream.on('end', resolve);
+    });
+    return {
+        checksum: `sha1:${hash.digest('hex')}`,
+        bytes: stat.size,
+    };
 }
 
 function parseIgnoredPatterns(ignoredText: string): string[] {
@@ -57,9 +99,7 @@ export async function createServerBackup(opts: {
             entries.length > 0 ? entries : ['.']
         );
 
-        const buf = fs.readFileSync(archivePath);
-        const checksum = `sha1:${crypto.createHash('sha1').update(buf).digest('hex')}`;
-        const bytes = buf.length;
+        const { checksum, bytes } = await computeFileSha1(archivePath);
 
         await db.execute(
             `UPDATE backups SET is_successful = 1, checksum = ?, bytes = ?, completed_at = CURRENT_TIMESTAMP WHERE uuid = ?`,

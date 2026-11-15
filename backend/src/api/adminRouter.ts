@@ -220,6 +220,27 @@ router.post('/allocations/delete/:id', async (req: Request, res: Response) => {
     res.redirect('/admin/allocations');
 });
 
+router.post('/allocations/delete-mass', async (req: Request, res: Response) => {
+    const rawIds = req.body?.ids;
+    const idList = (Array.isArray(rawIds) ? rawIds : typeof rawIds === 'string' ? [rawIds] : [])
+        .map((v) => Number(v))
+        .filter((n) => Number.isInteger(n) && n > 0);
+
+    if (idList.length === 0) {
+        setFlash(res, 'error', 'No unused allocations selected.');
+        res.redirect('/admin/allocations');
+        return;
+    }
+
+    const placeholders = idList.map(() => '?').join(', ');
+    const result = await db.execute(
+        `DELETE FROM allocations WHERE id IN (${placeholders}) AND server_id IS NULL`,
+        idList
+    );
+    setFlash(res, 'success', `Removed ${result.affectedRows} unused allocation(s).`);
+    res.redirect('/admin/allocations');
+});
+
 // Users
 router.get('/users', async (req: Request, res: Response) => {
     const query = String(req.query.query || '').trim();

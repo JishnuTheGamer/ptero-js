@@ -3,6 +3,7 @@ import path from 'node:path';
 import AdmZip from 'adm-zip';
 import * as tar from 'tar';
 import { config } from '../config/index';
+import { cleanupUploadMetaForPart } from './chunkUpload';
 import { formatModeString, normalizePosixPath, resolveServerPath } from './pathSafety';
 
 export interface FileEntry {
@@ -51,6 +52,7 @@ function detectMimeType(filePath: string, isDir: boolean, isSymlink: boolean): s
         '.svg': 'image/svg+xml',
         '.dat': 'application/octet-stream',
         '.mca': 'application/octet-stream',
+        '.part': 'application/octet-stream',
     };
     return map[ext] || 'text/plain';
 }
@@ -170,6 +172,9 @@ export function deleteFiles(uuid: string, rootDir: string, files: string[]): voi
         }
         if (fs.existsSync(target)) {
             fs.rmSync(target, { recursive: true, force: true });
+        }
+        if (file.endsWith('.part')) {
+            cleanupUploadMetaForPart(uuid, base, file);
         }
     }
 }

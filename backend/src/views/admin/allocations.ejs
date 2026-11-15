@@ -3,11 +3,23 @@
 <div class="row">
     <div class="col-sm-8">
         <div class="box box-primary">
-            <div class="box-header with-border"><h3 class="box-title">Existing Allocations (<%= node.name %>)</h3></div>
+            <div class="box-header with-border">
+                <h3 class="box-title">Existing Allocations (<%= node.name %>)</h3>
+                <div class="box-tools pull-right">
+                    <form id="massDeleteAllocationsForm" action="/admin/allocations/delete-mass" method="POST" style="display:inline;">
+                        <button type="submit" id="massDeleteAllocationsBtn" class="btn btn-xs btn-danger" disabled>
+                            <i class="fa fa-trash-o"></i> Delete Selected (<span id="selectedAllocationsCount">0</span>)
+                        </button>
+                    </form>
+                </div>
+            </div>
             <div class="box-body table-responsive no-padding">
                 <table class="table table-hover">
                     <tbody>
                         <tr>
+                            <th class="text-center" style="width: 36px;">
+                                <input type="checkbox" id="selectAllAllocations" title="Select all unused allocations" aria-label="Select all unused allocations">
+                            </th>
                             <th>IP Address</th>
                             <th>IP Alias</th>
                             <th>Port</th>
@@ -16,6 +28,13 @@
                         </tr>
                         <% for (const a of allocations) { %>
                         <tr>
+                            <td class="text-center">
+                                <% if (!a.server_id) { %>
+                                    <input type="checkbox" class="allocation-checkbox" name="ids" value="<%= a.id %>" form="massDeleteAllocationsForm" aria-label="Select allocation <%= a.ip %>:<%= a.port %>">
+                                <% } else { %>
+                                    <input type="checkbox" disabled title="In use by <%= a.server_name || 'server' %>" aria-label="Allocation in use by server">
+                                <% } %>
+                            </td>
                             <td><code><%= a.ip %></code></td>
                             <td><%= a.ip_alias || '-' %></td>
                             <td><code><%= a.port %></code></td>
@@ -71,5 +90,40 @@
         </div>
     </div>
 </div>
+
+<script>
+(function () {
+    var selectAll = document.getElementById('selectAllAllocations');
+    var deleteBtn = document.getElementById('massDeleteAllocationsBtn');
+    var countEl = document.getElementById('selectedAllocationsCount');
+    var checkboxes = Array.prototype.slice.call(document.querySelectorAll('.allocation-checkbox'));
+
+    if (!selectAll || !deleteBtn || !countEl) return;
+
+    function syncState() {
+        var selectable = checkboxes.filter(function (cb) { return !cb.disabled; });
+        var checked = selectable.filter(function (cb) { return cb.checked; });
+        countEl.textContent = String(checked.length);
+        deleteBtn.disabled = checked.length === 0;
+        selectAll.disabled = selectable.length === 0;
+        selectAll.checked = selectable.length > 0 && checked.length === selectable.length;
+        selectAll.indeterminate = checked.length > 0 && checked.length < selectable.length;
+    }
+
+    selectAll.addEventListener('change', function () {
+        var nextState = selectAll.checked;
+        checkboxes.forEach(function (cb) {
+            if (!cb.disabled) cb.checked = nextState;
+        });
+        syncState();
+    });
+
+    checkboxes.forEach(function (cb) {
+        cb.addEventListener('change', syncState);
+    });
+
+    syncState();
+})();
+</script>
 
 <%- include('partials/footer') %>

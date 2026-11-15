@@ -27,6 +27,7 @@
                         <label>Java Runtime Image</label>
                         <select name="image" class="form-control">
                             <option value="java:auto" <%= server.image === 'java:auto' ? 'selected' : '' %>>Auto-Detect</option>
+                            <option value="java:26" <%= server.image === 'java:26' ? 'selected' : '' %>>Java 26</option>
                             <option value="java:25" <%= server.image === 'java:25' ? 'selected' : '' %>>Java 25</option>
                             <option value="java:21" <%= server.image === 'java:21' ? 'selected' : '' %>>Java 21</option>
                             <option value="java:17" <%= server.image === 'java:17' ? 'selected' : '' %>>Java 17</option>

@@ -46,9 +46,12 @@ async function main() {
                 break;
             }
             case 'create-admin': {
-                const email = args[0] || 'admin@pterodactyl.local';
-                const username = (args[1] || 'admin').toLowerCase();
-                const password = args[2] || crypto.randomBytes(12).toString('base64url');
+                const email = args[0]?.trim();
+                const username = args[1]?.trim().toLowerCase();
+                const password = args[2];
+                if (!email || !username || !password) {
+                    throw new Error('Usage: cli.ts create-admin <email> <username> <password>');
+                }
                 await runMigrations();
                 const hash = await bcrypt.hash(password, 10);
                 const existing = await db.queryOne<{ id: number }>(
@@ -66,7 +69,6 @@ async function main() {
                     );
                     console.log(`Created admin user ${username} (${email})`);
                 }
-                if (!args[2]) console.log(`Generated Password: ${password}`);
                 break;
             }
             default:

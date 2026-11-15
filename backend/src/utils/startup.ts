@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+
 export interface StartupVariables {
     [key: string]: string | number | undefined;
 }
@@ -11,6 +14,36 @@ export function renderStartupCommand(template: string, variables: StartupVariabl
 
 function isZeroXmxArg(arg: string): boolean {
     return /^-Xmx(?:0+[KMGkmg]?|[KMGkmg]?)$/i.test(arg);
+}
+
+function parseJvmMemToMb(arg: string): number | null {
+    const m = arg.match(/^-Xm[sx](\d+)([KMGkmg]?)$/);
+    if (!m) return null;
+    const num = Number(m[1]);
+    const unit = (m[2] || '').toUpperCase();
+    if (unit === 'G') return num * 1024;
+    if (unit === 'M') return num;
+    if (unit === 'K') return Math.max(1, Math.floor(num / 1024));
+    return Math.max(1, Math.floor(num / (1024 * 1024)));
+}
+
+export function detectHostMemoryLimitMb(): number {
+    const osMemMb = Math.floor(os.totalmem() / (1024 * 1024));
+    for (const cgPath of ['/sys/fs/cgroup/memory.max', '/sys/fs/cgroup/memory/memory.limit_in_bytes']) {
+        try {
+            if (!fs.existsSync(cgPath)) continue;
+            const raw = fs.readFileSync(cgPath, 'utf8').trim();
+            if (!raw || raw === 'max') continue;
+            const bytes = Number(raw);
+            if (Number.isFinite(bytes) && bytes > 0 && bytes < 1e15) {
+                const cgMb = Math.floor(bytes / (1024 * 1024));
+                return Math.min(osMemMb, cgMb);
+            }
+        } catch {
+            // fallback to os.totalmem
+        }
+    }
+    return osMemMb;
 }
 
 export function buildServerStartupCommand(template: string, variables: StartupVariables, memoryMb: number): string {
@@ -31,6 +64,55 @@ export function buildJavaLaunchArgs(template: string, variables: StartupVariable
         jvmArgs = jvmArgs.filter((arg) => !isZeroXmxArg(arg));
     } else if (!jvmArgs.some((arg) => arg.startsWith('-Xmx'))) {
         jvmArgs.unshift(`-Xmx${memoryMb}M`);
+    }
+
+    return jvmArgs;
+}
+
+export function buildSafeServerJavaArgs(
+    template: string,
+    variables: StartupVariables,
+    memoryMb: number,
+    options?: { disableJline?: boolean; hostMemoryMb?: number }
+): string[] {
+    let jvmArgs = buildJavaLaunchArgs(template, variables, memoryMb);
+
+    if (memoryMb > 0) {
+        const hostLimit = options?.hostMemoryMb ?? detectHostMemoryLimitMb();
+        const hostCeiling = hostLimit > 0 ? Math.max(256, Math.floor(hostLimit * 0.85)) : memoryMb;
+        const serverCeiling = Math.max(128, Math.floor(memoryMb * 0.85));
+        const safeXmxMb = Math.min(serverCeiling, hostCeiling);
+
+        jvmArgs = jvmArgs.filter((arg) => !arg.startsWith('-XX:MaxRAMPercentage'));
+
+        let replacedXmx = false;
+        jvmArgs = jvmArgs.map((arg) => {
+            if (arg.startsWith('-Xmx')) {
+                replacedXmx = true;
+                const parsed = parseJvmMemToMb(arg);
+                const capped = parsed !== null ? Math.min(parsed, safeXmxMb) : safeXmxMb;
+                return `-Xmx${Math.max(128, capped)}M`;
+            }
+            if (arg.startsWith('-Xms')) {
+                const parsed = parseJvmMemToMb(arg);
+                if (parsed !== null && parsed > safeXmxMb) {
+                    return `-Xms${Math.max(128, Math.min(128, safeXmxMb))}M`;
+                }
+            }
+            return arg;
+        });
+        if (!replacedXmx) {
+            jvmArgs.unshift(`-Xmx${safeXmxMb}M`);
+        }
+    }
+
+    if (options?.disableJline !== false) {
+        jvmArgs = jvmArgs.filter(
+            (arg) => !arg.startsWith('-Dterminal.jline=') && !arg.startsWith('-Dterminal.ansi=')
+        );
+        const jarIdx = jvmArgs.findIndex((a) => a === '-jar' || a.startsWith('@'));
+        const insertAt = jarIdx >= 0 ? jarIdx : 0;
+        jvmArgs.splice(insertAt, 0, '-Dterminal.jline=false', '-Dterminal.ansi=false');
     }
 
     return jvmArgs;

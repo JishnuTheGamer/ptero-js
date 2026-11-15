@@ -9,7 +9,7 @@
     "dev": "tsx server.ts",
     "start": "node server.ts",
     "build": "tsc --noEmit",
-    "test": "tsx --test backend/src/utils/*.test.ts backend/src/files/*.test.ts backend/src/minecraft/*.test.ts",
+    "test": "tsx --test backend/src/utils/*.test.ts backend/src/files/*.test.ts backend/src/minecraft/*.test.ts backend/src/backups/*.test.ts",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"
   },

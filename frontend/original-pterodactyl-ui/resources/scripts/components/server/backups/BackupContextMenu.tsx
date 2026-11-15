@@ -41,8 +41,16 @@ export default ({ backup }: Props) => {
         clearFlashes('backups');
         getBackupDownloadUrl(uuid, backup.uuid)
             .then((url) => {
-                // @ts-expect-error this is valid
-                window.location = url;
+                const parsed = new URL(url, window.location.origin);
+                const downloadUrl = `${window.location.origin}${parsed.pathname}${parsed.search}`;
+                const link = document.createElement('a');
+                link.href = downloadUrl;
+                link.download = '';
+                link.rel = 'noopener';
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
             })
             .catch((error) => {
                 console.error(error);
