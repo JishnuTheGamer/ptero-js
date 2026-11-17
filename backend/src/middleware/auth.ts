@@ -91,6 +91,22 @@ export function ensureCsrfCookie(req: Request, res: Response, forceSet = false):
     return token;
 }
 
+const ACTIVITY_WRITE_THROTTLE_MS = 30_000;
+const lastActivityWriteMap = new Map<string, number>();
+
+function shouldRecordActivityWrite(key: string): boolean {
+    const now = Date.now();
+    const prev = lastActivityWriteMap.get(key);
+    if (prev && now - prev < ACTIVITY_WRITE_THROTTLE_MS) {
+        return false;
+    }
+    if (lastActivityWriteMap.size > 2000) {
+        lastActivityWriteMap.clear();
+    }
+    lastActivityWriteMap.set(key, now);
+    return true;
+}
+
 export async function attachSessionUser(req: Request, _res: Response, next: NextFunction): Promise<void> {
     try {
         // 1. Check Bearer API Key first (Client or Application API)
@@ -109,9 +125,11 @@ export async function attachSessionUser(req: Request, _res: Response, next: Next
                             if (user) {
                                 req.user = user;
                                 req.apiKeyId = keyRow.id;
-                                await db.execute('UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?', [
-                                    keyRow.id,
-                                ]);
+                                if (shouldRecordActivityWrite(`key:${keyRow.id}`)) {
+                                    await db.execute('UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?', [
+                                        keyRow.id,
+                                    ]);
+                                }
                                 next();
                                 return;
                             }
@@ -138,10 +156,12 @@ export async function attachSessionUser(req: Request, _res: Response, next: Next
                 if (user) {
                     req.user = user;
                     req.sessionId = sid;
-                    await db.execute('UPDATE sessions SET last_activity = ? WHERE id = ?', [
-                        Math.floor(Date.now() / 1000),
-                        sid,
-                    ]);
+                    if (shouldRecordActivityWrite(`sess:${sid}`)) {
+                        await db.execute('UPDATE sessions SET last_activity = ? WHERE id = ?', [
+                            Math.floor(Date.now() / 1000),
+                            sid,
+                        ]);
+                    }
                 }
             }
         }

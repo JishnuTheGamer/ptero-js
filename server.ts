@@ -41,14 +41,17 @@ async function bootstrap() {
     app.use(express.text({ type: 'text/plain', limit: '50mb' }));
     app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-    // Serve original Pterodactyl static assets; revalidate JS assets immediately so upload/UI fixes take effect right away
+    // Serve original Pterodactyl static assets; revalidate JS/CSS via ETag while caching fonts/images long-term
     app.use(
         express.static(config.paths.frontendPublicDir, {
-            maxAge: 0,
+            etag: true,
+            lastModified: true,
             index: false,
             setHeaders: (res, filePath) => {
                 if (filePath.endsWith('.js') || filePath.endsWith('.css')) {
                     res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+                } else if (/\.(woff2?|ttf|eot|svg|png|jpe?g|ico|gif)$/i.test(filePath)) {
+                    res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
                 }
             },
         })

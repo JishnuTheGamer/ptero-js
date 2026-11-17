@@ -69,34 +69,77 @@ export function buildJavaLaunchArgs(template: string, variables: StartupVariable
     return jvmArgs;
 }
 
+const CUSTOM_GC_FLAGS = [
+    '-XX:+UseG1GC',
+    '-XX:+UseZGC',
+    '-XX:+UseShenandoahGC',
+    '-XX:+UseParallelGC',
+    '-XX:+UseConcMarkSweepGC',
+    '-XX:+UseSerialGC',
+];
+
+function hasCustomGcFlag(args: string[]): boolean {
+    return args.some((arg) => CUSTOM_GC_FLAGS.includes(arg));
+}
+
+function isJavaServerCommand(args: string[]): boolean {
+    return args.some(
+        (arg) => arg === '-jar' || arg.startsWith('@') || arg.endsWith('.jar') || arg.startsWith('-X') || arg.startsWith('-D')
+    );
+}
+
+function appendUniqueJvmFlags(target: string[], flags: string[], insertAt: number): number {
+    const existingKeys = new Set(
+        target.map((arg) => {
+            const eq = arg.indexOf('=');
+            return eq > 0 ? arg.slice(0, eq + 1) : arg;
+        })
+    );
+    const toInsert = flags.filter((flag) => {
+        const eq = flag.indexOf('=');
+        const key = eq > 0 ? flag.slice(0, eq + 1) : flag;
+        return !existingKeys.has(key);
+    });
+    if (toInsert.length > 0) {
+        target.splice(insertAt, 0, ...toInsert);
+    }
+    return toInsert.length;
+}
+
 export function buildSafeServerJavaArgs(
     template: string,
     variables: StartupVariables,
     memoryMb: number,
-    options?: { disableJline?: boolean; hostMemoryMb?: number }
+    options?: { disableJline?: boolean; hostMemoryMb?: number; optimizeGc?: boolean }
 ): string[] {
     let jvmArgs = buildJavaLaunchArgs(template, variables, memoryMb);
+    let effectiveXmxMb = memoryMb > 0 ? memoryMb : 0;
 
     if (memoryMb > 0) {
         const hostLimit = options?.hostMemoryMb ?? detectHostMemoryLimitMb();
         const hostCeiling = hostLimit > 0 ? Math.max(256, Math.floor(hostLimit * 0.85)) : memoryMb;
         const serverCeiling = Math.max(128, Math.floor(memoryMb * 0.85));
         const safeXmxMb = Math.min(serverCeiling, hostCeiling);
+        effectiveXmxMb = safeXmxMb;
 
         jvmArgs = jvmArgs.filter((arg) => !arg.startsWith('-XX:MaxRAMPercentage'));
 
         let replacedXmx = false;
+        let hasXms = false;
         jvmArgs = jvmArgs.map((arg) => {
             if (arg.startsWith('-Xmx')) {
                 replacedXmx = true;
                 const parsed = parseJvmMemToMb(arg);
                 const capped = parsed !== null ? Math.min(parsed, safeXmxMb) : safeXmxMb;
-                return `-Xmx${Math.max(128, capped)}M`;
+                effectiveXmxMb = Math.max(128, capped);
+                return `-Xmx${effectiveXmxMb}M`;
             }
             if (arg.startsWith('-Xms')) {
+                hasXms = true;
                 const parsed = parseJvmMemToMb(arg);
                 if (parsed !== null && parsed > safeXmxMb) {
-                    return `-Xms${Math.max(128, Math.min(128, safeXmxMb))}M`;
+                    const cappedXms = Math.min(safeXmxMb, Math.max(128, Math.floor(safeXmxMb * 0.5)));
+                    return `-Xms${cappedXms}M`;
                 }
             }
             return arg;
@@ -104,6 +147,51 @@ export function buildSafeServerJavaArgs(
         if (!replacedXmx) {
             jvmArgs.unshift(`-Xmx${safeXmxMb}M`);
         }
+        if (!hasXms && isJavaServerCommand(jvmArgs)) {
+            const initialXms = Math.min(safeXmxMb, Math.max(128, Math.min(1024, Math.floor(safeXmxMb * 0.5))));
+            jvmArgs.unshift(`-Xms${initialXms}M`);
+        }
+    } else {
+        const xmxArg = jvmArgs.find((arg) => arg.startsWith('-Xmx'));
+        const parsed = xmxArg ? parseJvmMemToMb(xmxArg) : null;
+        effectiveXmxMb = parsed ?? 2048;
+    }
+
+    if (options?.optimizeGc !== false && isJavaServerCommand(jvmArgs) && !hasCustomGcFlag(jvmArgs)) {
+        const isLargeHeap = effectiveXmxMb >= 12288;
+        const regionSizeMb = isLargeHeap ? 16 : effectiveXmxMb < 2048 ? 4 : 8;
+        const g1NewSize = isLargeHeap ? 40 : 30;
+        const g1MaxNewSize = isLargeHeap ? 50 : 40;
+        const g1Reserve = isLargeHeap ? 15 : 20;
+        const ihop = isLargeHeap ? 20 : 15;
+
+        const gcFlags = [
+            '-XX:+UseG1GC',
+            '-XX:+ParallelRefProcEnabled',
+            '-XX:MaxGCPauseMillis=200',
+            '-XX:+UnlockExperimentalVMOptions',
+            '-XX:+DisableExplicitGC',
+            `-XX:G1NewSizePercent=${g1NewSize}`,
+            `-XX:G1MaxNewSizePercent=${g1MaxNewSize}`,
+            `-XX:G1HeapRegionSize=${regionSizeMb}M`,
+            `-XX:G1ReservePercent=${g1Reserve}`,
+            '-XX:G1HeapWastePercent=5',
+            '-XX:G1MixedGCCountTarget=4',
+            `-XX:InitiatingHeapOccupancyPercent=${ihop}`,
+            '-XX:G1MixedGCLiveThresholdPercent=90',
+            '-XX:G1RSetUpdatingPauseTimePercent=5',
+            '-XX:SurvivorRatio=32',
+            '-XX:+PerfDisableSharedMem',
+            '-XX:MaxTenuringThreshold=1',
+            '-Dusing.aikars.flags=https://mcflags.emc.gs',
+            '-Daikars.new.flags=true',
+            '-Djava.net.preferIPv4Stack=true',
+            '-Djava.security.egd=file:/dev/./urandom',
+            '-Djava.awt.headless=true',
+        ];
+        const jarIdx = jvmArgs.findIndex((a) => a === '-jar' || a.startsWith('@'));
+        const insertAt = jarIdx >= 0 ? jarIdx : 0;
+        appendUniqueJvmFlags(jvmArgs, gcFlags, insertAt);
     }
 
     if (options?.disableJline !== false) {

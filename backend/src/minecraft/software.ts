@@ -101,12 +101,20 @@ export function writeServerProperties(serverDir: string, port: number, motd: str
         'enable-query': 'false',
         'max-players': '20',
         'online-mode': 'true',
-        'view-distance': '10',
+        'view-distance': '8',
+        'simulation-distance': '6',
+        'sync-chunk-writes': 'false',
+        'network-compression-threshold': '256',
+        'use-native-transport': 'true',
+        'entity-broadcast-range-percentage': '80',
     };
 
+    let existingRaw = '';
     let existingLines: string[] = [];
-    if (fs.existsSync(propsPath)) {
-        existingLines = fs.readFileSync(propsPath, 'utf8').split(/\r?\n/);
+    const exists = fs.existsSync(propsPath);
+    if (exists) {
+        existingRaw = fs.readFileSync(propsPath, 'utf8');
+        existingLines = existingRaw.split(/\r?\n/);
     }
 
     const updatedKeys = new Set<string>();
@@ -128,7 +136,11 @@ export function writeServerProperties(serverDir: string, port: number, motd: str
         }
     }
 
-    fs.writeFileSync(propsPath, outLines.filter((l, idx) => idx === 0 || l !== '' || idx < outLines.length - 1).join('\n') + '\n');
+    const nextContent =
+        outLines.filter((l, idx) => idx === 0 || l !== '' || idx < outLines.length - 1).join('\n') + '\n';
+    if (!exists || nextContent !== existingRaw) {
+        fs.writeFileSync(propsPath, nextContent);
+    }
 }
 
 export function writeEulaFile(serverDir: string, accepted = true): void {

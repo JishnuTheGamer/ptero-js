@@ -18,6 +18,7 @@ import {
 } from '../files/chunkUpload';
 import { resolveDownloadPath, resolveUploadDestination } from '../files/fileManager';
 import { formatApiError } from '../middleware/auth';
+import { processManager } from '../processes/ServerProcessManager';
 import { logActivity } from '../services/activityService';
 
 const router = Router();
@@ -108,6 +109,8 @@ router.post('/api/daemon/servers/:uuid/upload', (req, _res, next) => { req.setTi
             }
             uploadedNames.push(file.originalname);
         }
+
+        processManager.invalidateDiskCache(claims.server_uuid);
 
         await logActivity({
             event: 'server:file.upload',
@@ -231,6 +234,7 @@ router.post('/api/daemon/servers/:uuid/upload/complete', async (req: Request, re
             expectedSize: totalSize,
         });
 
+        processManager.invalidateDiskCache(claims.server_uuid);
         cleanupStaleUploadStaging();
 
         await logActivity({

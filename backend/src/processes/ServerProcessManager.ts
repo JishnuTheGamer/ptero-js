@@ -32,48 +32,85 @@ interface ManagedServer {
     restartTimestamps: number[];
     lastCpuTicks: number | null;
     lastSampleAt: number | null;
+    diskSizeUpdatedAt: number;
+    diskSizePromise: Promise<number> | null;
+    pendingFileLogs: string[];
+    logFlushTimer: NodeJS.Timeout | null;
     stats: ServerStats;
 }
 
 type WsListener = (event: string, data: string) => void;
 
 const MAX_LOG_BUFFER = 500;
+const DISK_CACHE_TTL_MS = 20_000;
+const LOG_FLUSH_INTERVAL_MS = 100;
+const LOG_FLUSH_BATCH_SIZE = 64;
 
-function computeDirectorySize(dirPath: string): number {
-    if (!fs.existsSync(dirPath)) return 0;
+export const JTG_TERMINAL_PRELUDE = '\u001b[1m\u001b[33mcontainer@JTG STUDIO~ \u001b[0m';
+
+export function formatJtgConsoleLine(message: string): string {
+    return `${JTG_TERMINAL_PRELUDE}${message}\u001b[0m`;
+}
+
+export async function computeDirectorySizeAsync(dirPath: string): Promise<number> {
+    try {
+        await fs.promises.access(dirPath);
+    } catch {
+        return 0;
+    }
+
     let total = 0;
-    const stack = [dirPath];
+    const stack: string[] = [dirPath];
+
     while (stack.length > 0) {
         const current = stack.pop()!;
         let entries: fs.Dirent[];
         try {
-            entries = fs.readdirSync(current, { withFileTypes: true });
+            entries = await fs.promises.readdir(current, { withFileTypes: true });
         } catch {
             continue;
         }
+
+        const filePaths: string[] = [];
         for (const entry of entries) {
             const full = path.join(current, entry.name);
-            try {
-                if (entry.isDirectory()) {
-                    stack.push(full);
-                } else if (entry.isFile()) {
-                    total += fs.statSync(full).size;
-                }
-            } catch {
-                // ignore transient files
+            if (entry.isDirectory()) {
+                stack.push(full);
+            } else if (entry.isFile()) {
+                filePaths.push(full);
+            }
+        }
+
+        for (let i = 0; i < filePaths.length; i += 64) {
+            const batch = filePaths.slice(i, i + 64);
+            const sizes = await Promise.all(
+                batch.map(async (filePath) => {
+                    try {
+                        const st = await fs.promises.stat(filePath);
+                        return st.size;
+                    } catch {
+                        return 0;
+                    }
+                })
+            );
+            for (const sz of sizes) {
+                total += sz;
             }
         }
     }
+
     return total;
 }
 
-function readProcessMemoryAndCpu(pid: number): { rssBytes: number; cpuTicks: number } | null {
+async function readProcessMemoryAndCpuAsync(pid: number): Promise<{ rssBytes: number; cpuTicks: number } | null> {
     try {
-        const statusStr = fs.readFileSync(`/proc/${pid}/status`, 'utf8');
+        const [statusStr, statStr] = await Promise.all([
+            fs.promises.readFile(`/proc/${pid}/status`, 'utf8'),
+            fs.promises.readFile(`/proc/${pid}/stat`, 'utf8'),
+        ]);
         const vmRssMatch = statusStr.match(/VmRSS:\s+(\d+)\s+kB/);
         const rssBytes = vmRssMatch ? Number(vmRssMatch[1]) * 1024 : 0;
 
-        const statStr = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
         const rparen = statStr.lastIndexOf(')');
         const fields = statStr.slice(rparen + 2).split(/\s+/);
         const utime = Number(fields[11] || 0);
@@ -84,9 +121,9 @@ function readProcessMemoryAndCpu(pid: number): { rssBytes: number; cpuTicks: num
     }
 }
 
-function readHostNetworkBytes(): { rx: number; tx: number } {
+async function readHostNetworkBytesAsync(): Promise<{ rx: number; tx: number }> {
     try {
-        const netDev = fs.readFileSync('/proc/net/dev', 'utf8');
+        const netDev = await fs.promises.readFile('/proc/net/dev', 'utf8');
         let rx = 0;
         let tx = 0;
         for (const line of netDev.split('\n').slice(2)) {
@@ -108,6 +145,7 @@ class ServerProcessManager {
     private servers = new Map<string, ManagedServer>();
     private listeners = new Map<string, Set<WsListener>>();
     private monitorInterval: NodeJS.Timeout | null = null;
+    private isSampling = false;
 
     startMonitor(): void {
         if (this.monitorInterval) return;
@@ -127,6 +165,29 @@ class ServerProcessManager {
         const dir = path.join(config.paths.serversDir, uuid);
         fs.mkdirSync(dir, { recursive: true });
         return dir;
+    }
+
+    private refreshDiskSize(managed: ManagedServer): Promise<number> {
+        if (managed.diskSizePromise) return managed.diskSizePromise;
+        const dirPath = this.getServerDir(managed.uuid);
+        managed.diskSizePromise = computeDirectorySizeAsync(dirPath)
+            .then((size) => {
+                managed.stats.disk_bytes = size;
+                managed.diskSizeUpdatedAt = Date.now();
+                return size;
+            })
+            .catch(() => managed.stats.disk_bytes)
+            .finally(() => {
+                managed.diskSizePromise = null;
+            });
+        return managed.diskSizePromise;
+    }
+
+    invalidateDiskCache(uuid: string): void {
+        const managed = this.servers.get(uuid);
+        if (managed) {
+            managed.diskSizeUpdatedAt = 0;
+        }
     }
 
     private getOrCreateManaged(serverId: number, uuid: string, memoryMb: number): ManagedServer {
@@ -153,6 +214,10 @@ class ServerProcessManager {
                 restartTimestamps: [],
                 lastCpuTicks: null,
                 lastSampleAt: null,
+                diskSizeUpdatedAt: 0,
+                diskSizePromise: null,
+                pendingFileLogs: [],
+                logFlushTimer: null,
                 stats: {
                     memory_bytes: 0,
                     memory_limit_bytes: memoryMb * 1024 * 1024,
@@ -160,10 +225,11 @@ class ServerProcessManager {
                     network: { rx_bytes: 0, tx_bytes: 0 },
                     uptime: 0,
                     state: 'offline',
-                    disk_bytes: computeDirectorySize(this.getServerDir(uuid)),
+                    disk_bytes: 0,
                 },
             };
             this.servers.set(uuid, managed);
+            void this.refreshDiskSize(managed);
         }
         managed.stats.memory_limit_bytes = Math.max(0, Number(memoryMb || 0)) * 1024 * 1024;
         return managed;
@@ -195,16 +261,34 @@ class ServerProcessManager {
         }
     }
 
+    private async flushLogFile(managed: ManagedServer): Promise<void> {
+        if (managed.logFlushTimer) {
+            clearTimeout(managed.logFlushTimer);
+            managed.logFlushTimer = null;
+        }
+        if (managed.pendingFileLogs.length === 0) return;
+        const payload = managed.pendingFileLogs.join('');
+        managed.pendingFileLogs.length = 0;
+        try {
+            await fs.promises.appendFile(path.join(config.paths.logsDir, `server-${managed.uuid}.log`), payload);
+        } catch {
+            // ignore
+        }
+    }
+
     private appendLog(uuid: string, managed: ManagedServer, line: string, wsEvent = 'console output'): void {
         const clean = line.replace(/\r?\n$/, '');
         managed.logs.push(clean);
         if (managed.logs.length > MAX_LOG_BUFFER) {
             managed.logs.shift();
         }
-        try {
-            fs.appendFileSync(path.join(config.paths.logsDir, `server-${uuid}.log`), clean + '\n');
-        } catch {
-            // ignore
+        managed.pendingFileLogs.push(clean + '\n');
+        if (managed.pendingFileLogs.length >= LOG_FLUSH_BATCH_SIZE) {
+            void this.flushLogFile(managed);
+        } else if (!managed.logFlushTimer) {
+            managed.logFlushTimer = setTimeout(() => {
+                void this.flushLogFile(managed);
+            }, LOG_FLUSH_INTERVAL_MS);
         }
         this.emit(uuid, wsEvent, clean);
     }
@@ -215,7 +299,11 @@ class ServerProcessManager {
 
     async getStats(serverId: number, uuid: string, memoryMb: number): Promise<ServerStats> {
         const managed = this.getOrCreateManaged(serverId, uuid, memoryMb);
-        managed.stats.disk_bytes = computeDirectorySize(this.getServerDir(uuid));
+        if (managed.diskSizeUpdatedAt === 0) {
+            await this.refreshDiskSize(managed);
+        } else if (Date.now() - managed.diskSizeUpdatedAt > DISK_CACHE_TTL_MS) {
+            void this.refreshDiskSize(managed);
+        }
         managed.stats.uptime = managed.startedAt ? Date.now() - managed.startedAt : 0;
         managed.stats.state = managed.state;
         return { ...managed.stats };
@@ -331,8 +419,25 @@ class ServerProcessManager {
         }
     }
 
+    private markServerRunning(uuid: string, managed: ManagedServer): void {
+        if (managed.state !== 'starting') return;
+        managed.state = 'running';
+        this.emit(uuid, 'status', 'running');
+        this.appendLog(
+            uuid,
+            managed,
+            formatJtgConsoleLine('Server marked as running!'),
+            'console output'
+        );
+    }
+
     async startServer(serverId: number): Promise<void> {
-        const { server, envMap } = await this.loadServerContext(serverId);
+        const [{ server, envMap }, defaultJavaSetting] = await Promise.all([
+            this.loadServerContext(serverId),
+            db.queryOne<{ value: string }>(
+                "SELECT value FROM settings WHERE `key` = 'settings:java:default_path'"
+            ),
+        ]);
         const managed = this.getOrCreateManaged(server.id, server.uuid, server.memory);
         if (managed.process && managed.state !== 'offline') {
             return;
@@ -345,10 +450,6 @@ class ServerProcessManager {
             if (detected) mcVersion = detected;
         }
         const jarFile = envMap.SERVER_JARFILE || 'server.jar';
-
-        const defaultJavaSetting = await db.queryOne<{ value: string }>(
-            "SELECT value FROM settings WHERE `key` = 'settings:java:default_path'"
-        );
 
         const javaCheck = await ensureJavaRuntime(
             {
@@ -407,6 +508,12 @@ class ServerProcessManager {
             `Starting Minecraft server using ${javaCheck.runtime.path} (Java ${javaCheck.runtime.rawVersion})`,
             'daemon message'
         );
+        this.appendLog(
+            server.uuid,
+            managed,
+            formatJtgConsoleLine(`Starting server runtime (Java ${javaCheck.runtime.rawVersion})...`),
+            'console output'
+        );
 
         const child = spawn(javaCheck.runtime.path, jvmArgs, {
             cwd: serverDir,
@@ -415,6 +522,8 @@ class ServerProcessManager {
                 PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
                 HOME: serverDir,
                 TERM: 'dumb',
+                LANG: process.env.LANG || 'C.UTF-8',
+                LC_ALL: process.env.LC_ALL || 'C.UTF-8',
             },
         });
 
@@ -428,31 +537,42 @@ class ServerProcessManager {
             // use default
         }
 
-        const handleData = (chunk: Buffer) => {
-            const lines = chunk.toString('utf8').split(/\r?\n/);
-            for (const line of lines) {
-                if (!line) continue;
-                this.appendLog(server.uuid, managed, line, 'console output');
-                if (managed.state === 'starting' && line.includes(doneToken)) {
-                    managed.state = 'running';
-                    this.emit(server.uuid, 'status', 'running');
-                }
+        let stdoutCarry = '';
+        let stderrCarry = '';
+
+        const processLine = (line: string) => {
+            if (!line) return;
+            this.appendLog(server.uuid, managed, line, 'console output');
+            if (managed.state === 'starting' && line.includes(doneToken)) {
+                this.markServerRunning(server.uuid, managed);
             }
         };
 
-        child.stdout?.on('data', handleData);
-        child.stderr?.on('data', handleData);
+        const createChunkHandler = (isStderr: boolean) => (chunk: Buffer) => {
+            const text = (isStderr ? stderrCarry : stdoutCarry) + chunk.toString('utf8');
+            const parts = text.split(/\r?\n/);
+            const carry = parts.pop() || '';
+            if (isStderr) stderrCarry = carry;
+            else stdoutCarry = carry;
+
+            for (const line of parts) {
+                processLine(line);
+            }
+        };
+
+        child.stdout?.on('data', createChunkHandler(false));
+        child.stderr?.on('data', createChunkHandler(true));
 
         // Fallback: transition starting -> running if process stays alive > 5s and emits logs
         setTimeout(() => {
             if (managed.process === child && managed.state === 'starting') {
-                managed.state = 'running';
-                this.emit(server.uuid, 'status', 'running');
+                this.markServerRunning(server.uuid, managed);
             }
         }, 5000);
 
         child.on('error', (err) => {
             this.appendLog(server.uuid, managed, `Process error: ${err.message}`, 'daemon error');
+            void this.flushLogFile(managed);
             managed.process = null;
             managed.state = 'offline';
             managed.startedAt = null;
@@ -460,6 +580,15 @@ class ServerProcessManager {
         });
 
         child.on('close', (code, signal) => {
+            if (stdoutCarry) {
+                processLine(stdoutCarry);
+                stdoutCarry = '';
+            }
+            if (stderrCarry) {
+                processLine(stderrCarry);
+                stderrCarry = '';
+            }
+            void this.flushLogFile(managed);
             if (managed.stopTimer) {
                 clearTimeout(managed.stopTimer);
                 managed.stopTimer = null;
@@ -564,15 +693,30 @@ class ServerProcessManager {
             }
         }
         await Promise.allSettled(promises);
+        await Promise.allSettled(Array.from(this.servers.values()).map((m) => this.flushLogFile(m)));
     }
 
     private async sampleAllServers(): Promise<void> {
-        const net = readHostNetworkBytes();
-        const now = Date.now();
+        if (this.isSampling) return;
+        const activeServers = Array.from(this.servers.values()).filter(
+            (m) => Boolean(m.process?.pid) && m.state !== 'offline'
+        );
+        if (activeServers.length === 0) return;
 
-        for (const managed of this.servers.values()) {
-            if (managed.process?.pid && managed.state !== 'offline') {
-                const procStats = readProcessMemoryAndCpu(managed.process.pid);
+        this.isSampling = true;
+        try {
+            const [net, procResults] = await Promise.all([
+                readHostNetworkBytesAsync(),
+                Promise.all(
+                    activeServers.map(async (managed) => ({
+                        managed,
+                        procStats: await readProcessMemoryAndCpuAsync(managed.process!.pid!),
+                    }))
+                ),
+            ]);
+            const now = Date.now();
+
+            for (const { managed, procStats } of procResults) {
                 if (procStats) {
                     managed.stats.memory_bytes = procStats.rssBytes;
                     if (managed.lastCpuTicks !== null && managed.lastSampleAt !== null) {
@@ -589,6 +733,8 @@ class ServerProcessManager {
                 managed.stats.state = managed.state;
                 this.emit(managed.uuid, 'stats', JSON.stringify(managed.stats));
             }
+        } finally {
+            this.isSampling = false;
         }
     }
 }

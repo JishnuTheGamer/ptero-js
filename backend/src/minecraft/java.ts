@@ -58,7 +58,7 @@ export function parseRequestedJavaMajor(imageOrSpec?: string): number | null {
 
 async function inspectJavaBinary(javaBin: string): Promise<JavaRuntime | null> {
     try {
-        if (!fs.existsSync(javaBin)) return null;
+        await fs.promises.access(javaBin, fs.constants.X_OK);
         const { stdout, stderr } = await execFileAsync(javaBin, ['-version'], { timeout: 5000 });
         const combined = `${stderr || ''}\n${stdout || ''}`;
         const parsed = parseJavaVersion(combined);
@@ -86,7 +86,15 @@ export function normalizeSupportedJavaMajor(major: number): SupportedJavaMajor {
     return 26;
 }
 
-export async function discoverJavaRuntimes(): Promise<JavaRuntime[]> {
+const JAVA_DISCOVERY_CACHE_TTL_MS = 60_000;
+let javaDiscoveryCache: { at: number; runtimes: JavaRuntime[] } | null = null;
+let javaDiscoveryInFlight: Promise<JavaRuntime[]> | null = null;
+
+export function invalidateJavaDiscoveryCache(): void {
+    javaDiscoveryCache = null;
+}
+
+async function scanJavaRuntimes(): Promise<JavaRuntime[]> {
     const candidates = new Set<string>();
 
     if (config.defaultJavaPath) {
@@ -99,19 +107,25 @@ export async function discoverJavaRuntimes(): Promise<JavaRuntime[]> {
         path.resolve(config.rootDir, '.data', 'java'),
     ];
     for (const root of localRoots) {
-        if (fs.existsSync(root)) {
-            for (const entry of fs.readdirSync(root)) {
+        try {
+            const entries = await fs.promises.readdir(root);
+            for (const entry of entries) {
                 candidates.add(path.join(root, entry, 'bin', 'java'));
             }
+        } catch {
+            // directory does not exist
         }
     }
 
     // 2. Standard Linux & JTG JVM paths
     for (const base of ['/opt/jtg-java', '/opt/java', '/usr/lib/jvm', '/usr/java']) {
-        if (fs.existsSync(base)) {
-            for (const entry of fs.readdirSync(base)) {
+        try {
+            const entries = await fs.promises.readdir(base);
+            for (const entry of entries) {
                 candidates.add(path.join(base, entry, 'bin', 'java'));
             }
+        } catch {
+            // directory does not exist
         }
     }
 
@@ -120,15 +134,15 @@ export async function discoverJavaRuntimes(): Promise<JavaRuntime[]> {
         if (p) candidates.add(path.join(p, 'java'));
     }
 
+    const inspected = await Promise.all(Array.from(candidates).map((candidate) => inspectJavaBinary(candidate)));
     const found: JavaRuntime[] = [];
     const seenReal = new Set<string>();
 
-    for (const candidate of candidates) {
-        const runtime = await inspectJavaBinary(candidate);
+    for (const runtime of inspected) {
         if (!runtime) continue;
         let real = runtime.path;
         try {
-            real = fs.realpathSync(runtime.path);
+            real = await fs.promises.realpath(runtime.path);
         } catch {
             // keep candidate path
         }
@@ -139,6 +153,25 @@ export async function discoverJavaRuntimes(): Promise<JavaRuntime[]> {
 
     found.sort((a, b) => b.majorVersion - a.majorVersion);
     return found;
+}
+
+export async function discoverJavaRuntimes(options?: { forceRefresh?: boolean }): Promise<JavaRuntime[]> {
+    const now = Date.now();
+    if (!options?.forceRefresh && javaDiscoveryCache && now - javaDiscoveryCache.at < JAVA_DISCOVERY_CACHE_TTL_MS) {
+        return javaDiscoveryCache.runtimes;
+    }
+    if (javaDiscoveryInFlight && !options?.forceRefresh) {
+        return javaDiscoveryInFlight;
+    }
+    javaDiscoveryInFlight = scanJavaRuntimes()
+        .then((runtimes) => {
+            javaDiscoveryCache = { at: Date.now(), runtimes };
+            return runtimes;
+        })
+        .finally(() => {
+            javaDiscoveryInFlight = null;
+        });
+    return javaDiscoveryInFlight;
 }
 
 export async function selectJavaRuntime(opts: {
@@ -285,6 +318,7 @@ export async function installTemurinJava(
     if (!runtime) {
         throw new Error(`Installed Java ${majorVersion} binary verification failed at ${javaBin}`);
     }
+    invalidateJavaDiscoveryCache();
     onProgress?.(`Installed Java ${runtime.rawVersion} at ${runtime.path}`);
     return runtime;
 }

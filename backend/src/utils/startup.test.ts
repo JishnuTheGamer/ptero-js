@@ -68,3 +68,39 @@ test('buildSafeServerJavaArgs disables JLine/ANSI and caps JVM heap safely', () 
     assert.ok(unlimited.includes('-Dterminal.jline=false'));
     assert.ok(unlimited.includes('-Dterminal.ansi=false'));
 });
+
+test('buildSafeServerJavaArgs injects tuned G1GC flags and respects custom GC or optimizeGc=false', () => {
+    const optimized = buildSafeServerJavaArgs(
+        'java -Xmx{{SERVER_MEMORY}}M -jar {{SERVER_JARFILE}} nogui',
+        { SERVER_JARFILE: 'paper.jar' },
+        4096,
+        { disableJline: true, hostMemoryMb: 8192 }
+    );
+    assert.ok(optimized.includes('-XX:+UseG1GC'));
+    assert.ok(optimized.includes('-XX:+ParallelRefProcEnabled'));
+    assert.ok(optimized.includes('-XX:G1HeapRegionSize=8M'));
+    assert.ok(optimized.includes('-Djava.net.preferIPv4Stack=true'));
+    assert.ok(optimized.includes('-Djava.security.egd=file:/dev/./urandom'));
+    assert.ok(optimized.includes('-Djava.awt.headless=true'));
+    assert.ok(!optimized.includes('-XX:+AlwaysPreTouch'));
+    assert.ok(optimized.some((a) => a.startsWith('-Xms')));
+    assert.ok(optimized.indexOf('-XX:+UseG1GC') < optimized.indexOf('-jar'));
+
+    const customGc = buildSafeServerJavaArgs(
+        'java -Xms1024M -Xmx4096M -XX:+UseZGC -jar server.jar nogui',
+        {},
+        4096,
+        { hostMemoryMb: 8192 }
+    );
+    assert.ok(customGc.includes('-XX:+UseZGC'));
+    assert.equal(customGc.includes('-XX:+UseG1GC'), false);
+
+    const disabledGc = buildSafeServerJavaArgs(
+        'java -Xms128M -Xmx2048M -jar server.jar nogui',
+        {},
+        2048,
+        { optimizeGc: false, hostMemoryMb: 8192 }
+    );
+    assert.equal(disabledGc.includes('-XX:+UseG1GC'), false);
+});
+

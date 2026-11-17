@@ -44,16 +44,78 @@ const router = Router();
 router.use(requireAuth);
 
 async function loadServerRelations(serverId: number, eggId: number) {
-    const allocations = await db.query<any>('SELECT * FROM allocations WHERE server_id = ? ORDER BY id ASC', [serverId]);
-    const variables = await db.query<any>(
-        `SELECT ev.*, COALESCE(sv.variable_value, ev.default_value) AS server_value
-         FROM egg_variables ev
-         LEFT JOIN server_variables sv ON sv.variable_id = ev.id AND sv.server_id = ?
-         WHERE ev.egg_id = ?
-         ORDER BY ev.id ASC`,
-        [serverId, eggId]
-    );
+    const [allocations, variables] = await Promise.all([
+        db.query<any>('SELECT * FROM allocations WHERE server_id = ? ORDER BY id ASC', [serverId]),
+        db.query<any>(
+            `SELECT ev.*, COALESCE(sv.variable_value, ev.default_value) AS server_value
+             FROM egg_variables ev
+             LEFT JOIN server_variables sv ON sv.variable_id = ev.id AND sv.server_id = ?
+             WHERE ev.egg_id = ?
+             ORDER BY ev.id ASC`,
+            [serverId, eggId]
+        ),
+    ]);
     return { allocations, variables };
+}
+
+async function loadBatchServerRelations(servers: any[]): Promise<Map<number, { allocations: any[]; variables: any[] }>> {
+    const result = new Map<number, { allocations: any[]; variables: any[] }>();
+    if (servers.length === 0) return result;
+
+    const serverIds = Array.from(new Set(servers.map((s) => Number(s.id))));
+    const eggIds = Array.from(new Set(servers.map((s) => Number(s.egg_id))));
+    const sPlaceholders = serverIds.map(() => '?').join(', ');
+    const ePlaceholders = eggIds.map(() => '?').join(', ');
+
+    const [allocRows, eggVarRows, serverVarRows] = await Promise.all([
+        db.query<any>(`SELECT * FROM allocations WHERE server_id IN (${sPlaceholders}) ORDER BY id ASC`, serverIds),
+        db.query<any>(`SELECT * FROM egg_variables WHERE egg_id IN (${ePlaceholders}) ORDER BY id ASC`, eggIds),
+        db.query<any>(`SELECT * FROM server_variables WHERE server_id IN (${sPlaceholders})`, serverIds),
+    ]);
+
+    const allocsByServer = new Map<number, any[]>();
+    for (const a of allocRows) {
+        const sid = Number(a.server_id);
+        const list = allocsByServer.get(sid) || [];
+        list.push(a);
+        allocsByServer.set(sid, list);
+    }
+
+    const varsByEgg = new Map<number, any[]>();
+    for (const ev of eggVarRows) {
+        const eid = Number(ev.egg_id);
+        const list = varsByEgg.get(eid) || [];
+        list.push(ev);
+        varsByEgg.set(eid, list);
+    }
+
+    const overridesByServer = new Map<number, Map<number, string>>();
+    for (const sv of serverVarRows) {
+        const sid = Number(sv.server_id);
+        let map = overridesByServer.get(sid);
+        if (!map) {
+            map = new Map<number, string>();
+            overridesByServer.set(sid, map);
+        }
+        map.set(Number(sv.variable_id), sv.variable_value);
+    }
+
+    for (const s of servers) {
+        const sid = Number(s.id);
+        const eid = Number(s.egg_id);
+        const eggVars = varsByEgg.get(eid) || [];
+        const svMap = overridesByServer.get(sid);
+        const variables = eggVars.map((ev) => ({
+            ...ev,
+            server_value: svMap && svMap.has(Number(ev.id)) ? svMap.get(Number(ev.id)) : ev.default_value,
+        }));
+        result.set(sid, {
+            allocations: allocsByServer.get(sid) || [],
+            variables,
+        });
+    }
+
+    return result;
 }
 
 function buildBaseUrl(req: Request): string {
@@ -112,12 +174,11 @@ router.get('/', async (req: Request, res: Response) => {
 
     const total = rows.length;
     const paged = rows.slice((page - 1) * perPage, page * perPage);
-    const transformed = await Promise.all(
-        paged.map(async (s) => {
-            const { allocations, variables } = await loadServerRelations(s.id, s.egg_id);
-            return transformServer(s, user.id, allocations, variables, true);
-        })
-    );
+    const relationsMap = await loadBatchServerRelations(paged);
+    const transformed = paged.map((s) => {
+        const rel = relationsMap.get(Number(s.id)) || { allocations: [], variables: [] };
+        return transformServer(s, user.id, rel.allocations, rel.variables, true);
+    });
 
     res.json(paginateList(transformed, total, page, perPage));
 });
@@ -432,13 +493,21 @@ router.get('/servers/:server/activity', requireServerAccess('activity.read'), as
         [server.id, perPage, offset]
     );
 
-    const items = await Promise.all(
-        rows.map(async (r) => {
-            const actor = r.actor_id ? await db.queryOne<any>('SELECT * FROM users WHERE id = ?', [r.actor_id]) : null;
-            const viewerCanSeeIp = Boolean(req.user!.root_admin) || r.actor_id === req.user!.id;
-            return transformActivityLog(r, actor, viewerCanSeeIp);
-        })
-    );
+    const actorIds = Array.from(new Set(rows.map((r) => r.actor_id).filter((id): id is number => Boolean(id))));
+    const actorMap = new Map<number, any>();
+    if (actorIds.length > 0) {
+        const placeholders = actorIds.map(() => '?').join(', ');
+        const actors = await db.query<any>(`SELECT * FROM users WHERE id IN (${placeholders})`, actorIds);
+        for (const a of actors) {
+            actorMap.set(Number(a.id), a);
+        }
+    }
+
+    const items = rows.map((r) => {
+        const actor = r.actor_id ? actorMap.get(Number(r.actor_id)) || null : null;
+        const viewerCanSeeIp = Boolean(req.user!.root_admin) || r.actor_id === req.user!.id;
+        return transformActivityLog(r, actor, viewerCanSeeIp);
+    });
     res.json(paginateList(items, totalRow?.cnt || 0, page, perPage));
 });
 
@@ -510,10 +579,10 @@ function handleFileError(res: Response, err: unknown): void {
     res.status(400).json(formatApiError(400, 'FileOperationException', (err as Error).message));
 }
 
-router.get('/servers/:server/files/list', requireServerAccess('file.read'), (req: Request, res: Response) => {
+router.get('/servers/:server/files/list', requireServerAccess('file.read'), async (req: Request, res: Response) => {
     try {
         const dir = String(req.query.directory || '/');
-        const entries = fileManager.listDirectory(req.server!.uuid, dir);
+        const entries = await fileManager.listDirectoryAsync(req.server!.uuid, dir);
         res.json({ object: 'list', data: entries.map(transformFileObject) });
     } catch (err) {
         handleFileError(res, err);
@@ -578,6 +647,7 @@ router.post('/servers/:server/files/write', requireServerAccess('file.update'), 
         const file = String(req.query.file || '');
         const content = typeof req.body === 'string' ? req.body : String(req.body?.content ?? '');
         fileManager.writeFileContents(req.server!.uuid, file, content);
+        processManager.invalidateDiskCache(req.server!.uuid);
         await logActivity({
             event: 'server:file.write',
             ip: req.ip,
@@ -637,6 +707,7 @@ router.post('/servers/:server/files/delete', requireServerAccess('file.delete'),
         const rootDir = String(req.body?.root || '/');
         const files = Array.isArray(req.body?.files) ? req.body.files : [];
         fileManager.deleteFiles(req.server!.uuid, rootDir, files);
+        processManager.invalidateDiskCache(req.server!.uuid);
         await logActivity({
             event: 'server:file.delete',
             ip: req.ip,
@@ -667,6 +738,7 @@ router.post('/servers/:server/files/compress', requireServerAccess('file.archive
         const rootDir = String(req.body?.root || '/');
         const files = Array.isArray(req.body?.files) ? req.body.files : [];
         const entry = await fileManager.compressFiles(req.server!.uuid, rootDir, files);
+        processManager.invalidateDiskCache(req.server!.uuid);
         res.json(transformFileObject(entry));
     } catch (err) {
         handleFileError(res, err);
@@ -678,6 +750,7 @@ router.post('/servers/:server/files/decompress', requireServerAccess('file.archi
         const rootDir = String(req.body?.root || '/');
         const file = String(req.body?.file || '');
         await fileManager.decompressArchive(req.server!.uuid, rootDir, file);
+        processManager.invalidateDiskCache(req.server!.uuid);
         res.status(204).end();
     } catch (err) {
         handleFileError(res, err);
@@ -690,6 +763,7 @@ router.post('/servers/:server/files/pull', requireServerAccess('file.create'), a
         const directory = String(req.body?.directory || '/');
         const filename = req.body?.filename ? String(req.body.filename) : undefined;
         await fileManager.pullRemoteFile(req.server!.uuid, directory, url, filename);
+        processManager.invalidateDiskCache(req.server!.uuid);
         res.status(204).end();
     } catch (err) {
         handleFileError(res, err);
@@ -879,14 +953,22 @@ router.delete('/servers/:server/backups/:backup', requireServerAccess('backup.de
 
 router.get('/servers/:server/schedules', requireServerAccess('schedule.read'), async (req: Request, res: Response) => {
     const rows = await db.query<any>('SELECT * FROM schedules WHERE server_id = ? ORDER BY id ASC', [req.server!.id]);
-    const items = await Promise.all(
-        rows.map(async (s) => {
-            const tasks = await db.query<any>('SELECT * FROM tasks WHERE schedule_id = ? ORDER BY sequence_id ASC', [
-                s.id,
-            ]);
-            return transformSchedule(s, tasks);
-        })
-    );
+    const tasksBySchedule = new Map<number, any[]>();
+    if (rows.length > 0) {
+        const scheduleIds = rows.map((s) => Number(s.id));
+        const placeholders = scheduleIds.map(() => '?').join(', ');
+        const allTasks = await db.query<any>(
+            `SELECT * FROM tasks WHERE schedule_id IN (${placeholders}) ORDER BY sequence_id ASC`,
+            scheduleIds
+        );
+        for (const t of allTasks) {
+            const sid = Number(t.schedule_id);
+            const list = tasksBySchedule.get(sid) || [];
+            list.push(t);
+            tasksBySchedule.set(sid, list);
+        }
+    }
+    const items = rows.map((s) => transformSchedule(s, tasksBySchedule.get(Number(s.id)) || []));
     res.json({ object: 'list', data: items });
 });
 
@@ -1140,12 +1222,16 @@ router.delete('/servers/:server/network/allocations/:allocation', requireServerA
 
 router.get('/servers/:server/users', requireServerAccess('user.read'), async (req: Request, res: Response) => {
     const subs = await db.query<any>('SELECT * FROM subusers WHERE server_id = ?', [req.server!.id]);
-    const items = await Promise.all(
-        subs.map(async (sub) => {
-            const u = await db.queryOne<any>('SELECT * FROM users WHERE id = ?', [sub.user_id]);
-            return transformSubuser(sub, u);
-        })
-    );
+    const userMap = new Map<number, any>();
+    if (subs.length > 0) {
+        const userIds = Array.from(new Set(subs.map((s) => Number(s.user_id))));
+        const placeholders = userIds.map(() => '?').join(', ');
+        const users = await db.query<any>(`SELECT * FROM users WHERE id IN (${placeholders})`, userIds);
+        for (const u of users) {
+            userMap.set(Number(u.id), u);
+        }
+    }
+    const items = subs.map((sub) => transformSubuser(sub, userMap.get(Number(sub.user_id)) || null));
     res.json({ object: 'list', data: items });
 });
 

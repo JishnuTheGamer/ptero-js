@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import mysql, { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, StatementSync } from 'node:sqlite';
 import { config } from '../config/index';
 import { logger } from '../utils/logger';
 
@@ -20,10 +20,13 @@ function normalizeParams(params: SqlParam[]): (string | number | null)[] {
     });
 }
 
+const MAX_PREPARED_CACHE = 256;
+
 class DatabaseManager {
     private driver: 'mysql' | 'sqlite' = 'mysql';
     private pool: Pool | null = null;
     private sqliteDb: DatabaseSync | null = null;
+    private stmtCache = new Map<string, StatementSync>();
     private initialized = false;
 
     async init(): Promise<void> {
@@ -70,10 +73,33 @@ class DatabaseManager {
         } catch {
             // Ignore if not currently in WAL mode
         }
-        this.sqliteDb.exec('PRAGMA journal_mode = DELETE; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
+        this.sqliteDb.exec(
+            'PRAGMA journal_mode = DELETE; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -16000; PRAGMA mmap_size = 67108864;'
+        );
+        try {
+            this.sqliteDb.exec(`
+                CREATE INDEX IF NOT EXISTS idx_egg_variables_egg ON egg_variables(egg_id);
+                CREATE INDEX IF NOT EXISTS idx_subusers_server ON subusers(server_id);
+                CREATE INDEX IF NOT EXISTS idx_databases_server ON databases(server_id);
+                CREATE INDEX IF NOT EXISTS idx_ssh_keys_user ON user_ssh_keys(user_id);
+            `);
+        } catch {
+            // Schema tables may not exist yet prior to first migration
+        }
         this.driver = 'sqlite';
         this.initialized = true;
         logger.info('Connected to SQLite database', { path: config.db.sqlitePath });
+    }
+
+    private prepareSqlite(sql: string): StatementSync {
+        const cached = this.stmtCache.get(sql);
+        if (cached) return cached;
+        if (this.stmtCache.size >= MAX_PREPARED_CACHE) {
+            this.stmtCache.clear();
+        }
+        const stmt = this.sqliteDb!.prepare(sql);
+        this.stmtCache.set(sql, stmt);
+        return stmt;
     }
 
     getDriver(): 'mysql' | 'sqlite' {
@@ -87,7 +113,7 @@ class DatabaseManager {
             const [rows] = await this.pool.execute<RowDataPacket[]>(sql, bound);
             return rows as unknown as T[];
         }
-        const stmt = this.sqliteDb!.prepare(sql);
+        const stmt = this.prepareSqlite(sql);
         return stmt.all(...bound) as unknown as T[];
     }
 
@@ -103,7 +129,7 @@ class DatabaseManager {
             const [res] = await this.pool.execute<ResultSetHeader>(sql, bound);
             return { insertId: Number(res.insertId || 0), affectedRows: Number(res.affectedRows || 0) };
         }
-        const stmt = this.sqliteDb!.prepare(sql);
+        const stmt = this.prepareSqlite(sql);
         const info = stmt.run(...bound);
         return {
             insertId: Number(info.lastInsertRowid || 0),
@@ -121,6 +147,7 @@ class DatabaseManager {
     }
 
     async close(): Promise<void> {
+        this.stmtCache.clear();
         if (this.pool) {
             await this.pool.end();
             this.pool = null;

@@ -35,6 +35,27 @@ try {
 }
 const versionedMainBundle = `${cachedMainBundle}?v=${assetVersion}`;
 
+const localeCache = new Map<string, unknown>();
+const SETTINGS_CACHE_TTL_MS = 15_000;
+let settingsCache: { at: number; name: string; locale: string } | null = null;
+
+async function getSiteSettings(): Promise<{ name: string; locale: string }> {
+    const now = Date.now();
+    if (settingsCache && now - settingsCache.at < SETTINGS_CACHE_TTL_MS) {
+        return settingsCache;
+    }
+    const rows = await db.query<{ key: string; value: string }>(
+        "SELECT `key`, value FROM settings WHERE `key` IN ('settings:app:name', 'settings:app:locale')"
+    );
+    const map = new Map(rows.map((r) => [r.key, r.value]));
+    settingsCache = {
+        at: now,
+        name: map.get('settings:app:name') || config.appName,
+        locale: map.get('settings:app:locale') || 'en',
+    };
+    return settingsCache;
+}
+
 router.get('/locales/locale.json', (req: Request, res: Response) => {
     const locales = String(req.query.locale || 'en')
         .split(/[\s,+]+/)
@@ -49,16 +70,22 @@ router.get('/locales/locale.json', (req: Request, res: Response) => {
         response[loc] = {};
         for (const ns of namespaces) {
             const safeNs = ns.replace(/\.\./g, '').replace(/^\/+/, '');
+            const cacheKey = `${safeLoc}:${safeNs}`;
+            if (localeCache.has(cacheKey)) {
+                response[loc][ns] = localeCache.get(cacheKey);
+                continue;
+            }
             const filePath = path.join(config.paths.frontendLocalesDir, safeLoc, `${safeNs}.json`);
+            let parsed: unknown = {};
             if (fs.existsSync(filePath)) {
                 try {
-                    response[loc][ns] = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                    parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
                 } catch {
-                    response[loc][ns] = {};
+                    parsed = {};
                 }
-            } else {
-                response[loc][ns] = {};
             }
+            localeCache.set(cacheKey, parsed);
+            response[loc][ns] = parsed;
         }
     }
 
@@ -80,12 +107,7 @@ async function renderSpa(req: Request, res: Response) {
         return;
     }
 
-    const appNameSetting = await db.queryOne<{ value: string }>(
-        "SELECT value FROM settings WHERE `key` = 'settings:app:name'"
-    );
-    const localeSetting = await db.queryOne<{ value: string }>(
-        "SELECT value FROM settings WHERE `key` = 'settings:app:locale'"
-    );
+    const siteSettings = await getSiteSettings();
 
     const pterodactylUser = req.user
         ? {
@@ -104,8 +126,8 @@ async function renderSpa(req: Request, res: Response) {
         : null;
 
     const siteConfiguration = {
-        name: appNameSetting?.value || config.appName,
-        locale: localeSetting?.value || 'en',
+        name: siteSettings.name,
+        locale: siteSettings.locale,
         recaptcha: {
             enabled: false,
             siteKey: '',

@@ -106,6 +106,57 @@ export function listDirectory(uuid: string, directory = '/'): FileEntry[] {
     return items;
 }
 
+export async function listDirectoryAsync(uuid: string, directory = '/'): Promise<FileEntry[]> {
+    const root = getServerRoot(uuid);
+    const targetDir = resolveServerPath(root, directory, true);
+    const stat = await fs.promises.stat(targetDir);
+    if (!stat.isDirectory()) {
+        throw new Error('Target path is not a directory');
+    }
+
+    const entries = await fs.promises.readdir(targetDir, { withFileTypes: true });
+    const items: FileEntry[] = [];
+
+    for (let i = 0; i < entries.length; i += 64) {
+        const batch = entries.slice(i, i + 64);
+        const resolvedBatch = await Promise.all(
+            batch.map(async (entry): Promise<FileEntry | null> => {
+                const full = path.join(targetDir, entry.name);
+                try {
+                    const lstat = await fs.promises.lstat(full);
+                    const isSymlink = lstat.isSymbolicLink();
+                    const isDir = entry.isDirectory();
+                    const isFile = !isDir && !isSymlink;
+                    const { mode, modeBits } = formatModeString(lstat.mode, isDir);
+                    return {
+                        name: entry.name,
+                        mode,
+                        mode_bits: modeBits,
+                        size: isDir ? 0 : lstat.size,
+                        is_file: isFile,
+                        is_symlink: isSymlink,
+                        mimetype: detectMimeType(full, isDir, isSymlink),
+                        created_at: lstat.birthtime.toISOString(),
+                        modified_at: lstat.mtime.toISOString(),
+                    };
+                } catch {
+                    return null;
+                }
+            })
+        );
+        for (const item of resolvedBatch) {
+            if (item) items.push(item);
+        }
+    }
+
+    items.sort((a, b) => {
+        if (a.is_file !== b.is_file) return a.is_file ? 1 : -1;
+        return a.name.localeCompare(b.name);
+    });
+
+    return items;
+}
+
 export function getFileContents(uuid: string, filePath: string): string {
     const root = getServerRoot(uuid);
     const resolved = resolveServerPath(root, filePath, true);

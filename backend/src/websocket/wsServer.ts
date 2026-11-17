@@ -41,6 +41,7 @@ export function attachWebSocketServer(httpServer: HttpServer): WebSocketServer {
 
     wss.on('connection', (ws: WebSocket, _req: unknown, serverUuid: string) => {
         let claims: WsJwtClaims | null = null;
+        let cachedServer: { id: number; memory: number; refreshedAt: number } | null = null;
         let unsubscribe: (() => void) | null = null;
         let expiryTimer: NodeJS.Timeout | null = null;
         const pingTimer = setInterval(() => {
@@ -59,6 +60,23 @@ export function attachWebSocketServer(httpServer: HttpServer): WebSocketServer {
                 clearTimeout(expiryTimer);
                 expiryTimer = null;
             }
+        };
+
+        const getCachedServer = async (forceRefresh = false): Promise<{ id: number; memory: number } | null> => {
+            const now = Date.now();
+            if (!forceRefresh && cachedServer && now - cachedServer.refreshedAt < 30_000) {
+                return cachedServer;
+            }
+            const row = await db.queryOne<{ id: number; memory: number }>(
+                'SELECT id, memory FROM servers WHERE uuid = ?',
+                [serverUuid]
+            );
+            if (!row) {
+                cachedServer = null;
+                return null;
+            }
+            cachedServer = { id: row.id, memory: row.memory, refreshedAt: now };
+            return cachedServer;
         };
 
         ws.on('close', clearTimers);
@@ -97,6 +115,7 @@ export function attachWebSocketServer(httpServer: HttpServer): WebSocketServer {
                     }
 
                     claims = decoded;
+                    cachedServer = { id: server.id, memory: server.memory, refreshedAt: Date.now() };
                     sendWs(ws, 'auth success');
 
                     // Subscribe to live server events
@@ -128,12 +147,6 @@ export function attachWebSocketServer(httpServer: HttpServer): WebSocketServer {
             const hasPerm = (perm: string) =>
                 claims!.permissions.includes('*') || claims!.permissions.includes(perm);
 
-            const server = await db.queryOne<{ id: number; memory: number }>(
-                'SELECT id, memory FROM servers WHERE uuid = ?',
-                [serverUuid]
-            );
-            if (!server) return;
-
             if (event === 'send logs') {
                 const logs = processManager.getLogs(serverUuid);
                 for (const line of logs) {
@@ -143,6 +156,8 @@ export function attachWebSocketServer(httpServer: HttpServer): WebSocketServer {
             }
 
             if (event === 'send stats') {
+                const server = await getCachedServer(false);
+                if (!server) return;
                 const stats = await processManager.getStats(server.id, serverUuid, server.memory);
                 sendWs(ws, 'stats', [JSON.stringify(stats)]);
                 return;
@@ -161,6 +176,8 @@ export function attachWebSocketServer(httpServer: HttpServer): WebSocketServer {
                     sendWs(ws, 'daemon error', ['You do not have permission to perform this power action.']);
                     return;
                 }
+                const server = await getCachedServer(true);
+                if (!server) return;
                 try {
                     await processManager.handlePowerAction(server.id, signal);
                 } catch (err) {
