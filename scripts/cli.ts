@@ -5,7 +5,6 @@ import { backupDatabase, restoreDatabase } from '../backend/src/database/backup'
 import { runMigrations } from '../backend/src/database/migrate';
 import { runSeeders } from '../backend/src/database/seed';
 import { discoverJavaRuntimes, installTemurinJava } from '../backend/src/minecraft/java';
-import { resolveInitialAdminCredentials } from '../backend/src/utils/adminBootstrap';
 
 async function main() {
     const [, , cmd, ...args] = process.argv;
@@ -72,34 +71,9 @@ async function main() {
                 }
                 break;
             }
-            case 'ensure-admin': {
-                await runMigrations();
-                const countRow = await db.queryOne<{ cnt: number }>('SELECT COUNT(*) AS cnt FROM users');
-                if (countRow && Number(countRow.cnt) > 0) {
-                    console.log(`Existing user accounts detected (${countRow.cnt}); skipping initial admin bootstrap.`);
-                    break;
-                }
-                const creds = resolveInitialAdminCredentials(process.env);
-                const hash = await bcrypt.hash(creds.password, 10);
-                await db.execute(
-                    `INSERT INTO users (uuid, username, email, name_first, name_last, password, language, root_admin, gravatar)
-                     VALUES (?, ?, ?, 'System', 'Administrator', ?, 'en', 1, 1)`,
-                    [crypto.randomUUID(), creds.username, creds.email, hash]
-                );
-                console.log('============================================================');
-                console.log('  ptero-js FIRST-BOOT ADMIN ACCOUNT CREATED');
-                console.log(`  Email    : ${creds.email}`);
-                console.log(`  Username : ${creds.username}`);
-                console.log(
-                    `  Password : ${creds.password}${creds.generatedPassword ? '  (auto-generated)' : '  (from ADMIN_PASSWORD)'}`
-                );
-                console.log('  Tip: Change this password after logging in.');
-                console.log('============================================================');
-                break;
-            }
             default:
                 console.error(
-                    'Usage: tsx scripts/cli.ts <migrate|seed|db-backup|db-restore|java-check|java-install|create-admin|ensure-admin>'
+                    'Usage: tsx scripts/cli.ts <migrate|seed|db-backup|db-restore|java-check|java-install|create-admin>'
                 );
                 process.exitCode = 1;
         }

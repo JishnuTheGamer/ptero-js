@@ -40,21 +40,6 @@ The installer sets up **Node.js 22+**, **Temurin Java 21**, **PM2**, configures 
 | `bash install.sh start` / `stop` / `restart` | Control the background PM2 service |
 | `bash install.sh version` | Display installed version |
 
-### Docker Quick Run (Port 80)
-
-```bash
-docker run -d \
-  --name ptero-js \
-  --restart unless-stopped \
-  -p 80:80 \
-  -p 25565-25575:25565-25575 \
-  -v ptero_storage:/app/storage \
-  -v ptero_java:/app/runtime/java \
-  jishnuyt/ptero-js:latest
-```
-
-Check `docker logs ptero-js` for the first-boot admin credentials (or pass `-e ADMIN_PASSWORD=...`). See [docker/README.md](docker/README.md) for Compose and `buildx` push instructions.
-
 ### Manual / Development Run
 
 ```bash
@@ -109,14 +94,13 @@ npx tsx scripts/cli.ts db-restore <path-to-sql>              # Restore database 
 ```text
 ├── backend/     # Express APIs, WebSocket console, SQLite/MySQL DB, Java & file engine
 ├── frontend/    # Pterodactyl v1.15.2 React SPA & AdminLTE static assets
-├── docker/      # Dockerfile, entrypoint.sh, docker-compose.yml (Port 80 ready)
 ├── scripts/     # Admin, DB, and Java CLI utilities
 ├── docs/        # Additional guides (MIGRATION.md, TESTING.md)
 ├── server.ts    # Main application entry point
 └── install.sh   # Interactive Linux/VPS installer & updater
 ```
 
-More docs: [Docker Guide](docker/README.md) · [Migration Guide](docs/MIGRATION.md) · [Testing Guide](docs/TESTING.md)
+More docs: [Migration Guide](docs/MIGRATION.md) · [Testing Guide](docs/TESTING.md)
 
 ---
 
