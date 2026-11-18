@@ -34,7 +34,8 @@ The installer sets up **Node.js 22+**, **Temurin Java 21**, **PM2**, configures 
 
 | Command | Action |
 |---|---|
-| `bash install.sh` | Open interactive menu (Install, Update, Create Admin, Uninstall) |
+| `bash install.sh` | Open interactive menu (Install, Update, Create Admin, Uninstall, Cloudflare PM2) |
+| `bash install.sh cloudflare` | Install `cloudflared` and manage Cloudflare Tunnel via PM2 (Quick or Token) |
 | `bash install.sh status` | Show panel, Node.js, Java, and PM2 status |
 | `bash install.sh start` / `stop` / `restart` | Control the background PM2 service |
 | `bash install.sh version` | Display installed version |

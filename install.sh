@@ -14,6 +14,7 @@ GITHUB_RAW_BASE="https://raw.githubusercontent.com/JishnuTheGamer/ptero-js"
 PANEL_VERSION="1.15.2"
 PINNED_NODE_VERSION="22.20.0"
 PM2_APP_NAME="ptero-js"
+CF_PM2_APP_NAME="ptero-js-cloudflared"
 LEGACY_SERVICE_NAME="pterodactyl-panel"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/ptero-js}"
 SCRIPT_SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -175,9 +176,24 @@ find_tsx_bin() {
     return 1
 }
 
+find_cloudflared_bin() {
+    if [[ -x "${APP_DIR}/runtime/bin/cloudflared" ]]; then
+        echo "${APP_DIR}/runtime/bin/cloudflared"
+        return 0
+    fi
+    if command -v cloudflared >/dev/null 2>&1; then
+        command -v cloudflared
+        return 0
+    fi
+    return 1
+}
+
 export_runtime_path() {
     if [[ -d "${APP_DIR}/runtime/node/bin" ]]; then
         export PATH="${APP_DIR}/runtime/node/bin:${PATH}"
+    fi
+    if [[ -d "${APP_DIR}/runtime/bin" ]]; then
+        export PATH="${APP_DIR}/runtime/bin:${PATH}"
     fi
     if [[ -d "${APP_DIR}/node_modules/.bin" ]]; then
         export PATH="${APP_DIR}/node_modules/.bin:${PATH}"
@@ -204,6 +220,7 @@ get_local_version() {
 }
 
 get_pm2_status_label() {
+    local app_name="${1:-$PM2_APP_NAME}"
     local pm2_bin
     pm2_bin="$(find_pm2_bin 2>/dev/null || true)"
     if [[ -z "$pm2_bin" ]]; then
@@ -212,8 +229,27 @@ get_pm2_status_label() {
     fi
     local raw
     raw="$("$pm2_bin" jlist 2>/dev/null || true)"
-    if printf '%s' "$raw" | grep -q "\"name\":\"${PM2_APP_NAME}\""; then
-        if printf '%s' "$raw" | grep -q '"status":"online"'; then
+    local node_bin=""
+    node_bin="$(find_node_bin 2>/dev/null || command -v node 2>/dev/null || true)"
+    if [[ -n "$node_bin" && -n "$raw" ]]; then
+        "$node_bin" -e '
+            const raw = process.argv[1] || "";
+            const app = process.argv[2] || "";
+            const idx = raw.indexOf("[");
+            if (idx === -1) { console.log("not registered"); process.exit(0); }
+            try {
+                const list = JSON.parse(raw.slice(idx));
+                const proc = Array.isArray(list) ? list.find((p) => p && p.name === app) : null;
+                if (!proc) console.log("not registered");
+                else if (proc.pm2_env && proc.pm2_env.status === "online") console.log("online");
+                else console.log((proc.pm2_env && proc.pm2_env.status) || "stopped");
+            } catch {
+                console.log("not registered");
+            }
+        ' "$raw" "$app_name" 2>/dev/null && return 0
+    fi
+    if printf '%s' "$raw" | grep -q "\"name\":\"${app_name}\""; then
+        if printf '%s' "$raw" | sed -E 's/\},\{"pid"/\n{"pid"/g' | grep -F "\"name\":\"${app_name}\"" | grep -q '"status":"online"'; then
             echo "online"
         else
             echo "stopped"
@@ -353,6 +389,49 @@ ensure_pm2() {
         return 1
     fi
     ok "Installed PM2 v$("$pm2_bin" -v 2>/dev/null || echo 'latest')"
+}
+
+ensure_cloudflared_bin() {
+    export_runtime_path
+    local cf_bin=""
+    cf_bin="$(find_cloudflared_bin 2>/dev/null || true)"
+    if [[ -n "$cf_bin" ]]; then
+        ok "cloudflared ready: $("$cf_bin" --version 2>/dev/null | head -n1 || echo "$cf_bin")"
+        return 0
+    fi
+
+    local raw_arch cf_arch
+    raw_arch="$(uname -m)"
+    case "$raw_arch" in
+        x86_64|amd64) cf_arch="amd64" ;;
+        aarch64|arm64) cf_arch="arm64" ;;
+        armv7l|armhf) cf_arch="arm" ;;
+        *)
+            err "Unsupported architecture for cloudflared: ${raw_arch}"
+            return 1
+            ;;
+    esac
+
+    local dl_url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cf_arch}"
+    local tmp_cf="/tmp/cloudflared-${cf_arch}"
+    log "Downloading official cloudflared (${cf_arch})..."
+    curl -fsSL -L "$dl_url" -o "$tmp_cf"
+    chmod +x "$tmp_cf"
+
+    if [[ "$(id -u)" -eq 0 ]] || command -v sudo >/dev/null 2>&1; then
+        run_priv mkdir -p /usr/local/bin
+        run_priv mv -f "$tmp_cf" /usr/local/bin/cloudflared
+        run_priv chmod +x /usr/local/bin/cloudflared
+        cf_bin="/usr/local/bin/cloudflared"
+    else
+        mkdir -p "${APP_DIR}/runtime/bin"
+        mv -f "$tmp_cf" "${APP_DIR}/runtime/bin/cloudflared"
+        chmod +x "${APP_DIR}/runtime/bin/cloudflared"
+        cf_bin="${APP_DIR}/runtime/bin/cloudflared"
+    fi
+
+    export_runtime_path
+    ok "Installed cloudflared: $("$cf_bin" --version 2>/dev/null | head -n1 || echo "$cf_bin")"
 }
 
 ensure_project_files() {
@@ -773,6 +852,8 @@ action_uninstall() {
     if [[ -n "$pm2_bin" ]]; then
         "$pm2_bin" stop "$PM2_APP_NAME" >/dev/null 2>&1 || true
         "$pm2_bin" delete "$PM2_APP_NAME" >/dev/null 2>&1 || true
+        "$pm2_bin" stop "$CF_PM2_APP_NAME" >/dev/null 2>&1 || true
+        "$pm2_bin" delete "$CF_PM2_APP_NAME" >/dev/null 2>&1 || true
         "$pm2_bin" save --force >/dev/null 2>&1 || "$pm2_bin" save >/dev/null 2>&1 || true
         ok "Removed PM2 process '${PM2_APP_NAME}'."
     fi
@@ -796,6 +877,157 @@ action_uninstall() {
 
     ok "ptero-js has been completely uninstalled."
     exit 0
+}
+
+# ------------------------------------------------------------------------------
+# Menu Option 5: Cloudflare Tunnel via PM2
+# ------------------------------------------------------------------------------
+extract_trycloudflare_url() {
+    local pm2_home="${PM2_HOME:-${HOME}/.pm2}"
+    local log_files=("${pm2_home}/logs/${CF_PM2_APP_NAME}-out.log" "${pm2_home}/logs/${CF_PM2_APP_NAME}-error.log")
+    local url=""
+    for lf in "${log_files[@]}"; do
+        if [[ -f "$lf" ]]; then
+            local found
+            found="$(grep -Eo 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$lf" 2>/dev/null | tail -n1 || true)"
+            [[ -n "$found" ]] && url="$found"
+        fi
+    done
+    echo "$url"
+}
+
+start_cloudflare_pm2_quick() {
+    local panel_port="$1"
+    local target_url=""
+    read -r -p "${C_WHITE}Local Panel URL${C_RESET} ${C_DIM}[default: http://127.0.0.1:${panel_port}]${C_RESET}: " target_url
+    target_url="${target_url:-http://127.0.0.1:${panel_port}}"
+
+    local pm2_bin cf_bin
+    pm2_bin="$(find_pm2_bin)"
+    cf_bin="$(find_cloudflared_bin)"
+
+    step "Starting Cloudflare Quick Tunnel under PM2 (${CF_PM2_APP_NAME})..."
+    "$pm2_bin" delete "$CF_PM2_APP_NAME" >/dev/null 2>&1 || true
+    rm -f "${PM2_HOME:-${HOME}/.pm2}/logs/${CF_PM2_APP_NAME}-"*.log 2>/dev/null || true
+
+    "$pm2_bin" start "$cf_bin" \
+        --interpreter none \
+        --name "$CF_PM2_APP_NAME" \
+        -- tunnel --no-autoupdate --url "$target_url"
+    "$pm2_bin" save >/dev/null 2>&1 || true
+
+    if is_systemd_active; then
+        "$pm2_bin" startup systemd -u "$(whoami)" --hp "$HOME" >/dev/null 2>&1 || true
+        "$pm2_bin" save >/dev/null 2>&1 || true
+    fi
+
+    log "Waiting for TryCloudflare public URL..."
+    local cf_url=""
+    for _ in $(seq 1 15); do
+        cf_url="$(extract_trycloudflare_url)"
+        [[ -n "$cf_url" ]] && break
+        sleep 1
+    done
+
+    printf "\n%s╔══════════════════════════════════════════════════════════════╗%s\n" "${C_GREEN}" "${C_RESET}"
+    printf "%s║%s  %sCloudflare Quick Tunnel Running via PM2%s                      %s║%s\n" "${C_GREEN}" "${C_RESET}" "${C_WHITE}" "${C_RESET}" "${C_GREEN}" "${C_RESET}"
+    printf "%s╠══════════════════════════════════════════════════════════════╣%s\n" "${C_GREEN}" "${C_RESET}"
+    printf "%s║%s  PM2 App      : %-44s %s║%s\n" "${C_GREEN}" "${C_RESET}" "$CF_PM2_APP_NAME" "${C_GREEN}" "${C_RESET}"
+    printf "%s║%s  Target       : %-44s %s║%s\n" "${C_GREEN}" "${C_RESET}" "$target_url" "${C_GREEN}" "${C_RESET}"
+    if [[ -n "$cf_url" ]]; then
+        printf "%s║%s  Public URL   : %-44s %s║%s\n" "${C_GREEN}" "${C_RESET}" "$cf_url" "${C_GREEN}" "${C_RESET}"
+    else
+        printf "%s║%s  Public URL   : Check -> pm2 logs %-28s %s║%s\n" "${C_GREEN}" "${C_RESET}" "$CF_PM2_APP_NAME" "${C_GREEN}" "${C_RESET}"
+    fi
+    printf "%s╚══════════════════════════════════════════════════════════════╝%s\n" "${C_GREEN}" "${C_RESET}"
+}
+
+start_cloudflare_pm2_token() {
+    local panel_port="$1"
+    local raw_token=""
+    while true; do
+        read -r -s -p "${C_WHITE}Cloudflare Tunnel Token${C_RESET} ${C_DIM}(from Zero Trust -> Tunnels)${C_RESET}: " raw_token
+        printf "\n"
+        # Strip optional 'cloudflared service install ' prefix and whitespace
+        raw_token="$(printf '%s' "$raw_token" | sed -E 's/^[[:space:]]*(sudo[[:space:]]+)?(cloudflared[[:space:]]+service[[:space:]]+install[[:space:]]+)?//; s/[[:space:]]+$//')"
+        if [[ -n "$raw_token" && ${#raw_token} -ge 20 ]]; then
+            break
+        fi
+        err "Invalid token. Paste the Cloudflare Tunnel token (or full install command)."
+    done
+
+    local pm2_bin cf_bin
+    pm2_bin="$(find_pm2_bin)"
+    cf_bin="$(find_cloudflared_bin)"
+
+    step "Starting Named Cloudflare Tunnel under PM2 (${CF_PM2_APP_NAME})..."
+    "$pm2_bin" delete "$CF_PM2_APP_NAME" >/dev/null 2>&1 || true
+
+    "$pm2_bin" start "$cf_bin" \
+        --interpreter none \
+        --name "$CF_PM2_APP_NAME" \
+        -- tunnel --no-autoupdate run --token "$raw_token"
+    "$pm2_bin" save >/dev/null 2>&1 || true
+
+    if is_systemd_active; then
+        "$pm2_bin" startup systemd -u "$(whoami)" --hp "$HOME" >/dev/null 2>&1 || true
+        "$pm2_bin" save >/dev/null 2>&1 || true
+    fi
+
+    ok "Cloudflare Token Tunnel '${CF_PM2_APP_NAME}' is running under PM2!"
+    log "In Cloudflare Zero Trust -> Public Hostname, point service URL to: http://127.0.0.1:${panel_port}"
+}
+
+action_cloudflare_pm2() {
+    clear_screen_safe
+    print_section_header "5) CLOUDFLARE PM2 — Tunnel Manager"
+
+    install_system_packages
+    ensure_node_runtime
+    ensure_pm2
+    ensure_cloudflared_bin
+
+    local panel_port pm2_bin cf_state cf_url
+    panel_port="$(get_env_port)"
+    pm2_bin="$(find_pm2_bin)"
+    cf_state="$(get_pm2_status_label "$CF_PM2_APP_NAME")"
+    cf_url="$(extract_trycloudflare_url)"
+
+    printf "  %sTunnel Status :%s %s\n" "${C_BOLD}" "${C_RESET}" "$cf_state"
+    [[ -n "$cf_url" ]] && printf "  %sLast URL      :%s %s\n" "${C_BOLD}" "${C_RESET}" "$cf_url"
+    printf "  %sPanel Target  :%s http://127.0.0.1:%s\n\n" "${C_BOLD}" "${C_RESET}" "$panel_port"
+
+    printf "   %s[1]%s Start Quick Tunnel (Free *.trycloudflare.com URL, No Token)\n" "${C_GREEN}" "${C_RESET}"
+    printf "   %s[2]%s Start Named Tunnel (Cloudflare Zero Trust Token)\n" "${C_CYAN}" "${C_RESET}"
+    printf "   %s[3]%s Tunnel Status & Recent Logs\n" "${C_BLUE}" "${C_RESET}"
+    printf "   %s[4]%s Stop & Remove Cloudflare PM2 Process\n" "${C_RED}" "${C_RESET}"
+    printf "   %s[0]%s Back to Main Menu\n\n" "${C_DIM}" "${C_RESET}"
+
+    local cf_choice=""
+    read -r -p "${C_BOLD}${C_YELLOW}Choose Cloudflare action [0-4]: ${C_RESET}" cf_choice
+    case "$cf_choice" in
+        1) start_cloudflare_pm2_quick "$panel_port" ;;
+        2) start_cloudflare_pm2_token "$panel_port" ;;
+        3)
+            "$pm2_bin" status "$CF_PM2_APP_NAME" || true
+            local live_url
+            live_url="$(extract_trycloudflare_url)"
+            [[ -n "$live_url" ]] && ok "Active TryCloudflare URL: ${live_url}"
+            "$pm2_bin" logs "$CF_PM2_APP_NAME" --lines 20 --nostream || true
+            ;;
+        4)
+            "$pm2_bin" stop "$CF_PM2_APP_NAME" >/dev/null 2>&1 || true
+            "$pm2_bin" delete "$CF_PM2_APP_NAME" >/dev/null 2>&1 || true
+            "$pm2_bin" save >/dev/null 2>&1 || true
+            ok "Stopped and removed Cloudflare PM2 tunnel '${CF_PM2_APP_NAME}'."
+            ;;
+        0|q|Q|"")
+            return 0
+            ;;
+        *)
+            err "Invalid choice '${cf_choice}'."
+            ;;
+    esac
 }
 
 # ------------------------------------------------------------------------------
@@ -884,6 +1116,9 @@ render_main_menu() {
     print_ansi_box_line "   ${C_RED}[4]${C_RESET}  ${C_WHITE}Uninstall${C_RESET}"
     print_ansi_box_line "        ${C_DIM}Stop PM2 and completely remove ptero-js from VPS${C_RESET}"
     print_ansi_box_line ""
+    print_ansi_box_line "   ${C_CYAN}[5]${C_RESET}  ${C_WHITE}Cloudflare PM2${C_RESET}"
+    print_ansi_box_line "        ${C_DIM}Setup cloudflared tunnel under PM2 (Quick or Token)${C_RESET}"
+    print_ansi_box_line ""
     print_ansi_box_line "   ${C_DIM}[0]${C_RESET}  Exit"
     printf "%s╚══════════════════════════════════════════════════════════════╝%s\n\n" "${C_CYAN}" "${C_RESET}"
 }
@@ -892,18 +1127,19 @@ main_menu_loop() {
     local choice=""
     while true; do
         render_main_menu
-        read -r -p "${C_BOLD}${C_YELLOW}Select an option [0-4]: ${C_RESET}" choice
+        read -r -p "${C_BOLD}${C_YELLOW}Select an option [0-5]: ${C_RESET}" choice
         case "$choice" in
             1) action_install || true; pause_prompt ;;
             2) action_update || true; pause_prompt ;;
             3) action_create_admin || true; pause_prompt ;;
             4) action_uninstall "false" || true; pause_prompt ;;
+            5) action_cloudflare_pm2 || true; pause_prompt ;;
             0|q|Q|exit)
                 printf "%sGoodbye!%s\n" "${C_CYAN}" "${C_RESET}"
                 exit 0
                 ;;
             *)
-                err "Invalid choice '${choice}'. Enter 1, 2, 3, 4, or 0."
+                err "Invalid choice '${choice}'. Enter 1, 2, 3, 4, 5, or 0."
                 sleep 1
                 ;;
         esac
@@ -918,10 +1154,11 @@ if [[ $# -eq 0 ]]; then
 fi
 
 case "${1:-}" in
-    menu)      main_menu_loop ;;
-    install)   action_install ;;
-    update)    action_update ;;
-    admin)     action_create_admin ;;
+    menu)       main_menu_loop ;;
+    install)    action_install ;;
+    update)     action_update ;;
+    admin)      action_create_admin ;;
+    cloudflare) action_cloudflare_pm2 ;;
     uninstall)
         if [[ "${2:-}" == "--purge" ]]; then
             action_uninstall "true"
@@ -940,6 +1177,7 @@ case "${1:-}" in
         pm2_bin="$(find_pm2_bin 2>/dev/null || true)"
         if [[ -n "$pm2_bin" ]]; then
             "$pm2_bin" status "$PM2_APP_NAME" || true
+            "$pm2_bin" status "$CF_PM2_APP_NAME" 2>/dev/null || true
         else
             echo "PM2     : missing"
         fi
@@ -949,7 +1187,7 @@ case "${1:-}" in
     restart)   export_runtime_path; "$(find_pm2_bin)" restart "$PM2_APP_NAME" && ok "Restarted." ;;
     version)   get_local_version ;;
     *)
-        echo "Usage: bash install.sh [menu|install|update|admin|uninstall [--purge]|status|start|stop|restart|version]"
+        echo "Usage: bash install.sh [menu|install|update|admin|cloudflare|uninstall [--purge]|status|start|stop|restart|version]"
         exit 1
         ;;
 esac
