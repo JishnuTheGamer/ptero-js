@@ -1,0 +1,45 @@
+services:
+  ptero-js:
+    image: jishnuyt/ptero-js:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: ptero-js
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "25565-25575:25565-25575"
+    environment:
+      PORT: "80"
+      NODE_ENV: "production"
+      DB_CONNECTION: "sqlite"
+      ALLOW_SQLITE_DEV_FALLBACK: "true"
+      # Optional: Set your first-boot admin credentials (leave commented to auto-generate & print in logs)
+      # ADMIN_EMAIL: "admin@ptero.local"
+      # ADMIN_USERNAME: "admin"
+      # ADMIN_PASSWORD: "ChangeMeStrong123!"
+      # LOCAL_NODE_FQDN: "your.vps.ip"
+      LOCAL_NODE_MEMORY_MB: "8192"
+      LOCAL_NODE_DISK_MB: "51200"
+    volumes:
+      - ptero_storage:/app/storage
+      - ptero_java:/app/runtime/java
+
+  # Optional MariaDB database (start with: docker compose --profile mysql up -d)
+  mariadb:
+    image: mariadb:11
+    container_name: ptero-js-mariadb
+    profiles: ["mysql"]
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: pterodactyl
+      MARIADB_USER: pterodactyl
+      MARIADB_PASSWORD: pterodactyl_db_pass
+      MARIADB_ROOT_PASSWORD: pterodactyl_root_pass
+    volumes:
+      - ptero_mysql:/var/lib/mysql
+
+volumes:
+  ptero_storage:
+  ptero_java:
+  ptero_mysql:
